@@ -1,30 +1,82 @@
-import { createClient, RedisClientType } from 'redis';
-import { RedisConfig, RedisClient } from '../interface/redis.interface.js';
+/**
+ * Client Redis simplifié avec fonctionnalités essentielles
+ */
 
-export class RedisClientImpl implements RedisClient {
+import { createClient, RedisClientType } from 'redis';
+import { 
+  RedisConfig, 
+  RedisClientExtended,
+  RedisOperationOptions,
+  RedisStats,
+  CacheEntry,
+  CacheOptions,
+  CacheStatistics,
+  AuthorizationLog,
+  LogFilter,
+  LogSearchResult,
+  UserSession,
+  SessionActivity,
+  RedisKeyBuilder,
+  RedisSerializer
+} from '../interface/redis.interface.js';
+
+import { ValidationResult } from '../interface/common.js';
+
+export class RedisClientImpl implements RedisClientExtended {
   private readonly config: RedisConfig;
   private client: RedisClientType;
   private connected: boolean = false;
   private readonly keyPrefix: string;
-  
-  /**
-   * Construit un nouveau client Redis
-   * @param config Configuration Redis
-   */
+  private cacheStats: CacheStatistics;
+  private keyBuilder: RedisKeyBuilderImpl;
+  private serializer: RedisSerializerImpl;
+
   constructor(config: RedisConfig) {
     this.config = config;
     this.keyPrefix = config.prefix || '';
+    
+    // Initialiser les utilitaires avant la création du client
+    this.keyBuilder = new RedisKeyBuilderImpl(this.keyPrefix);
+    this.serializer = new RedisSerializerImpl();
+    
+    this.cacheStats = {
+      totalRequests: 0,
+      successfulRequests: 0,
+      failedRequests: 0,
+      averageResponseTime: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      cacheHitRate: 0,
+      errorRate: 0,
+      startTime: new Date().toISOString(),
+      lastUpdate: new Date().toISOString(),
+      uptime: 0,
+      cacheSize: 0,
+      memoryUsage: 0,
+      topKeys: [],
+      // timestamp: new Date().toISOString()
+    };
     
     this.client = createClient({
       socket: {
         host: this.config.host,
         port: this.config.port,
-        tls: this.config.tls,
+        connectTimeout: this.config.connectTimeout,
       },
       password: this.config.password,
       database: this.config.db || 0,
-    });
+      commandsQueueMaxLength: this.config.maxRetriesPerRequest || 3
+      // lazyConnect: this.config.lazyConnect || false,
+    }) as RedisClientType;
     
+    this.setupEventHandlers();
+  }
+
+  // ============================================================================
+  // INITIALISATION
+  // ============================================================================
+
+  private setupEventHandlers(): void {
     this.client.on('error', (err) => {
       console.error('Erreur Redis:', err);
       this.connected = false;
@@ -32,214 +84,789 @@ export class RedisClientImpl implements RedisClient {
     
     this.client.on('connect', () => {
       this.connected = true;
+      console.log('Redis client connected');
+    });
+    
+    this.client.on('end', () => {
+      this.connected = false;
+      console.log('Redis client disconnected');
     });
   }
-  
-  /**
-   * Assure que le client est connecté avant d'exécuter des opérations
-   * @private
-   */
+
   private async ensureConnected(): Promise<void> {
+    if (!this.connected) {
+      await this.connect();
+    }
+  }
+
+  private getFullKey(key: string): string {
+    return this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+  }
+
+  // ============================================================================
+  // CONNEXION
+  // ============================================================================
+
+  async connect(): Promise<void> {
     if (!this.connected) {
       await this.client.connect();
       this.connected = true;
     }
   }
-  
-  /**
-   * Construit une clé complète avec préfixe si configuré
-   * @private
-   */
-  private getFullKey(key: string): string {
-    return this.keyPrefix ? `${this.keyPrefix}:${key}` : key;
+
+  async disconnect(): Promise<void> {
+    if (this.connected) {
+      await this.client.disconnect();
+      this.connected = false;
+    }
   }
-  
-  /**
-   * Récupère une valeur par sa clé
-   * @param key Clé à récupérer
-   */
+
+  isConnected(): boolean {
+    return this.connected;
+  }
+
+  async ping(): Promise<string> {
+    await this.ensureConnected();
+    return await this.client.ping();
+  }
+
+  async info(): Promise<string> {
+    await this.ensureConnected();
+    return await this.client.info();
+  }
+
+  // ============================================================================
+  // OPÉRATIONS DE BASE
+  // ============================================================================
+
   async get(key: string): Promise<string | null> {
     await this.ensureConnected();
-    const fullKey = this.getFullKey(key);
-    return await this.client.get(fullKey);
+    const startTime = Date.now();
+    
+    try {
+      const fullKey = this.getFullKey(key);
+      const result = await this.client.get(fullKey);
+      
+      this.updateCacheStats(true, Date.now() - startTime);
+      return result;
+    } catch (error) {
+      this.updateCacheStats(false, Date.now() - startTime);
+      throw error;
+    }
   }
-  
-  /**
-   * Stocke une valeur avec une clé et une durée de vie optionnelle
-   * @param key Clé pour stocker la valeur
-   * @param value Valeur à stocker
-   * @param ttl Durée de vie en secondes (optionnel)
-   */
-  async set(key: string, value: string, ttl?: number): Promise<void> {
+
+  async set(key: string, value: string, options?: RedisOperationOptions): Promise<void> {
     await this.ensureConnected();
     const fullKey = this.getFullKey(key);
     
-    if (ttl) {
-      await this.client.set(fullKey, value, { EX: ttl });
-    } else {
-      await this.client.set(fullKey, value);
-    }
+    const setOptions: any = {};
+    if (options?.ttl) setOptions.EX = options.ttl;
+    if (options?.nx) setOptions.NX = true;
+    if (options?.xx) setOptions.XX = true;
+    
+    await this.client.set(fullKey, value, setOptions);
   }
-  
-  /**
-   * Supprime une clé
-   * @param key Clé à supprimer
-   */
+
   async delete(key: string): Promise<void> {
     await this.ensureConnected();
     const fullKey = this.getFullKey(key);
     await this.client.del(fullKey);
   }
-  
-  /**
-   * Vérifie si une clé existe
-   * @param key Clé à vérifier
-   */
+
   async exists(key: string): Promise<boolean> {
     await this.ensureConnected();
     const fullKey = this.getFullKey(key);
     const result = await this.client.exists(fullKey);
     return result === 1;
   }
-  
-  /**
-   * Récupère toutes les clés correspondant à un pattern
-   * @param pattern Pattern de recherche
-   */
+
   async keys(pattern: string): Promise<string[]> {
     await this.ensureConnected();
     const fullPattern = this.getFullKey(pattern);
     const keys = await this.client.keys(fullPattern);
     
-    // Si un préfixe est défini, on le retire des clés retournées
     if (this.keyPrefix) {
-      const prefixLength = this.keyPrefix.length + 1; // +1 pour le ':'
+      const prefixLength = this.keyPrefix.length + 1;
       return keys.map(key => key.substring(prefixLength));
     }
     
     return keys;
   }
 
-  /**
- * Journalise une décision d'autorisation dans Redis
- */
-  async logAuthorizationDecision(
-    userId: string,
-    resourceId: string,
-    resourceType: string,
-    action: string,
-    allowed: boolean,
-    reason?: string,
-    context?: Record<string, any>
-  ): Promise<void> {
+  async expire(key: string, seconds: number): Promise<boolean> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    const result = await this.client.expire(fullKey, seconds);
+    return result;
+  }
+
+  async ttl(key: string): Promise<number> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.ttl(fullKey);
+  }
+
+  // ============================================================================
+  // CACHE TYPÉ
+  // ============================================================================
+
+  async getCache<T>(key: string): Promise<CacheEntry<T> | null> {
+    const rawData = await this.get(key);
+    if (!rawData) return null;
+    
+    try {
+      const cacheEntry = this.serializer.deserialize<CacheEntry<T>>(rawData);
+      
+      if (new Date(cacheEntry.expiresAt) < new Date()) {
+        await this.delete(key);
+        return null;
+      }
+      
+      return cacheEntry;
+    } catch (error) {
+      console.error('Error deserializing cache entry:', error);
+      await this.delete(key);
+      return null;
+    }
+  }
+
+  async setCache<T>(key: string, data: T, options?: CacheOptions): Promise<void> {
+    const now = new Date();
+    const ttl = options?.ttl || 3600;
+    const expiresAt = new Date(now.getTime() + (ttl * 1000));
+    
+    const cacheEntry: CacheEntry<T> = {
+      data,
+      cachedAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      version: options?.version,
+      metadata: options ? {
+        tags: options.tags,
+        namespace: options.namespace
+      } : undefined
+    };
+    
+    const serializedData = this.serializer.serialize(cacheEntry);
+    await this.set(key, serializedData, { ttl });
+    
+    // Gérer les tags pour l'invalidation groupée
+    if (options?.tags) {
+      for (const tag of options.tags) {
+        await this.sAdd(`cache:tags:${tag}`, key);
+        await this.expire(`cache:tags:${tag}`, ttl);
+      }
+    }
+  }
+
+  async deleteCache(key: string): Promise<void> {
+    await this.delete(key);
+  }
+
+  async invalidateByTag(tag: string): Promise<number> {
+    const keys = await this.sMembers(`cache:tags:${tag}`);
+    if (keys.length === 0) return 0;
+    
+    await this.batchDelete(keys);
+    await this.delete(`cache:tags:${tag}`);
+    
+    return keys.length;
+  }
+
+  async invalidateByPattern(pattern: string): Promise<number> {
+    const keys = await this.keys(pattern);
+    if (keys.length === 0) return 0;
+    
+    await this.batchDelete(keys);
+    return keys.length;
+  }
+
+  async getCacheStatistics(): Promise<CacheStatistics> {
+    return this.cacheStats;
+  }
+
+  async memoize<T>(
+    key: string,
+    fn: () => Promise<T>,
+    options?: CacheOptions
+  ): Promise<T> {
+    const cached = await this.getCache<T>(key);
+    if (cached) {
+      return cached.data;
+    }
+    
+    const result = await fn();
+    await this.setCache(key, result, options);
+    
+    return result;
+  }
+
+  // ============================================================================
+  // STRUCTURES DE DONNÉES REDIS
+  // ============================================================================
+
+  async hGet(key: string, field: string): Promise<string | null> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    const result = await this.client.hGet(fullKey, field);
+    return result || null;
+  }
+
+  async hSet(key: string, field: string, value: string): Promise<void> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    await this.client.hSet(fullKey, field, value);
+  }
+
+  async hGetAll(key: string): Promise<Record<string, string>> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.hGetAll(fullKey);
+  }
+
+  async hDel(key: string, field: string): Promise<void> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    await this.client.hDel(fullKey, field);
+  }
+
+  async lPush(key: string, value: string): Promise<number> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.lPush(fullKey, value);
+  }
+
+  async lPop(key: string): Promise<string | null> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.lPop(fullKey);
+  }
+
+  async lRange(key: string, start: number, stop: number): Promise<string[]> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.lRange(fullKey, start, stop);
+  }
+
+  async lTrim(key: string, start: number, stop: number): Promise<void> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    await this.client.lTrim(fullKey, start, stop);
+  }
+
+  async sAdd(key: string, member: string): Promise<number> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.sAdd(fullKey, member);
+  }
+
+  async sMembers(key: string): Promise<string[]> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.sMembers(fullKey);
+  }
+
+  async sRem(key: string, member: string): Promise<number> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.sRem(fullKey, member);
+  }
+
+  async zAdd(key: string, score: number, member: string): Promise<number> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.zAdd(fullKey, { score, value: member });
+  }
+
+  async zRange(key: string, start: number, stop: number, options?: { REV?: boolean }): Promise<string[]> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    if (options) {
+      return await this.client.zRange(fullKey, start, stop);
+    } else {
+      return await this.client.zRange(fullKey, start, stop);
+    }
+  }
+
+  async zRem(key: string, member: string): Promise<number> {
+    await this.ensureConnected();
+    const fullKey = this.getFullKey(key);
+    return await this.client.zRem(fullKey, member);
+  }
+
+  // ============================================================================
+  // JOURNALISATION D'AUTORISATION
+  // ============================================================================
+
+  async logAuthorizationDecision(log: Omit<AuthorizationLog, 'id' | 'timestamp'>): Promise<void> {
     await this.ensureConnected();
     
-    // Créer un ID unique pour la décision
-    const decisionId = `decision:${Date.now()}:${Math.random().toString(36).substring(2, 15)}`;
-    
-    // Créer l'objet de décision 
-    const decision = {
-      userId,
-      resourceId,
-      resourceType,
-      action,
-      allowed: String(allowed), // Convertir en string
-      reason: reason || (allowed ? "Autorisation accordée" : "Autorisation refusée"),
-      context: JSON.stringify(context || {}), // Convertir l'objet en string JSON
+    const logEntry: AuthorizationLog = {
+      ...log,
+      id: this.generateId(),
       timestamp: new Date().toISOString()
     };
     
-    // Sauvegarder la décision comme une hash
-    const key = this.getFullKey(decisionId);
+    const logKey = this.getFullKey(`auth:log:${logEntry.id}`);
+    const serializedLog = this.serializer.serialize(logEntry);
     
-    for (const [field, value] of Object.entries(decision)) {
-      await this.client.hSet(key, field, value);
-    }
+    await this.set(logKey, serializedLog, { ttl: 30 * 24 * 60 * 60 });
     
-    // Définir une durée de vie pour l'enregistrement 
-    await this.client.expire(key, 30 * 24 * 60 * 60);
+    // Ajouter aux index pour recherche
+    await this.zAdd(`auth:logs:user:${log.userId}`, Date.now(), logEntry.id);
+    await this.zAdd(`auth:logs:resource:${log.resourceId}`, Date.now(), logEntry.id);
+    await this.zAdd(`auth:logs:global`, Date.now(), logEntry.id);
     
-    // Ajouter à des ensembles pour récupération facile par utilisateur ou ressource
-    await this.client.sAdd(this.getFullKey(`user:${userId}:decisions`), decisionId);
-    await this.client.sAdd(this.getFullKey(`resource:${resourceId}:decisions`), decisionId);
-    
-    // Ajouter à une liste temporelle pour les requêtes chronologiques
-    await this.client.zAdd(this.getFullKey('decisions:timeline'), {
-      score: Date.now(),
-      value: decisionId
-    });
+    // Limiter la taille des index
+    await this.zRemRangeByRank(`auth:logs:user:${log.userId}`, 0, -1001);
+    await this.zRemRangeByRank(`auth:logs:resource:${log.resourceId}`, 0, -1001);
+    await this.zRemRangeByRank(`auth:logs:global`, 0, -10001);
   }
-    /**
-   * Récupère l'historique des décisions d'autorisation
-   */
-  async getAuthorizationHistory(
-    userId?: string,
-    resourceId?: string,
-    limit: number = 100,
-    offset: number = 0
-  ): Promise<Array<Record<string, any>>> {
+
+  async getAuthorizationHistory(filter: LogFilter): Promise<LogSearchResult> {
+    const startTime = Date.now();
     await this.ensureConnected();
     
-    let decisionIds: string[] = [];
-    
-    // Récupérer les décisions 
-    if (userId && resourceId) {
-      // décisions pour un utilisateur et une ressource simulatnément
-      const userDecisions = await this.client.sMembers(this.getFullKey(`user:${userId}:decisions`));
-      const resourceDecisions = await this.client.sMembers(this.getFullKey(`resource:${resourceId}:decisions`));
-      decisionIds = userDecisions.filter(id => resourceDecisions.includes(id));
-    } else if (userId) {
-      // Décisions pour un utilisateur 
-      decisionIds = await this.client.sMembers(this.getFullKey(`user:${userId}:decisions`));
-    } else if (resourceId) {
-      // Décisions pour une ressource 
-      decisionIds = await this.client.sMembers(this.getFullKey(`resource:${resourceId}:decisions`));
+    let indexKey: string;
+    if (filter.userId) {
+      indexKey = `auth:logs:user:${filter.userId}`;
+    } else if (filter.resourceId) {
+      indexKey = `auth:logs:resource:${filter.resourceId}`;
     } else {
-      // Tri des décisions suivant le temps
-      decisionIds = await this.client.zRange(
-        this.getFullKey('decisions:timeline'), 
-        offset, 
-        offset + limit - 1,
-        { REV: true }
-      );
-    }
-
-    // Limiter les résultats 
-    if (!userId && !resourceId) {
-      decisionIds = decisionIds.slice(offset, offset + limit);
+      indexKey = `auth:logs:global`;
     }
     
-    // Récupérer les détails de chaque décision
-    const decisions: Array<Record<string, any>> = [];
-  for (const id of decisionIds) {
-    const redisDecision = await this.client.hGetAll(this.getFullKey(id));
-    if (Object.keys(redisDecision).length > 0) {
-      const processedDecision: Record<string, any> = {
-        ...redisDecision,
-       
-        allowed: redisDecision.allowed === 'true'
-      };
+    const limit = filter.limit || 100;
+    const offset = filter.offset || 0;
+    const sortOrder = filter.sortOrder === 'asc' ? false : true;
+    
+    const logIds = await this.zRange(
+      indexKey, 
+      offset, 
+      offset + limit - 1, 
+      { REV: sortOrder }
+    );
+    
+    const logs: AuthorizationLog[] = [];
+    for (const logId of logIds) {
+      const logKey = this.getFullKey(`auth:log:${logId}`);
+      const serializedLog = await this.get(logKey);
       
-      // Traiter le contexte 
-      if (redisDecision.context) {
+      if (serializedLog) {
         try {
-          processedDecision.context = JSON.parse(redisDecision.context);
-        } catch (e) {
-          processedDecision.context = redisDecision.context;
+          const log = this.serializer.deserialize<AuthorizationLog>(serializedLog);
+          
+          if (this.matchesFilter(log, filter)) {
+            logs.push(log);
+          }
+        } catch (error) {
+          console.error('Error deserializing log:', error);
         }
       }
-      
-      decisions.push(processedDecision);
+    }
+    
+    const totalCount = await this.zCard(indexKey);
+    
+    return {
+      items: logs,
+      totalCount,
+      hasMore: offset + logs.length < totalCount,
+      pagination: {
+        limit,
+        offset
+      },
+      searchTime: Date.now() - startTime
+    };
+  }
+
+  // ============================================================================
+  // GESTION DES SESSIONS
+  // ============================================================================
+
+  async createSession(session: Omit<UserSession, 'createdAt' | 'lastActivity'>): Promise<string> {
+    await this.ensureConnected();
+    
+    const now = new Date().toISOString();
+    const fullSession: UserSession = {
+      ...session,
+      createdAt: now,
+      lastActivity: now
+    };
+    
+    const sessionKey = this.getFullKey(`session:${session.sessionId}`);
+    const userSessionsKey = this.getFullKey(`user:sessions:${session.userId}`);
+    
+    const serializedSession = this.serializer.serialize(fullSession);
+    await this.set(sessionKey, serializedSession, { ttl: 24 * 60 * 60 });
+    
+    await this.sAdd(userSessionsKey, session.sessionId);
+    
+    return session.sessionId;
+  }
+
+  async getSession(sessionId: string): Promise<UserSession | null> {
+    const sessionKey = this.getFullKey(`session:${sessionId}`);
+    const serializedSession = await this.get(sessionKey);
+    
+    if (!serializedSession) return null;
+    
+    try {
+      return this.serializer.deserialize<UserSession>(serializedSession);
+    } catch (error) {
+      console.error('Error deserializing session:', error);
+      await this.delete(sessionKey);
+      return null;
     }
   }
-  
-  return decisions;
+
+  async updateSession(sessionId: string, updates: Partial<UserSession>): Promise<void> {
+    const session = await this.getSession(sessionId);
+    if (!session) return;
+    
+    const updatedSession: UserSession = {
+      ...session,
+      ...updates,
+      lastActivity: new Date().toISOString()
+    };
+    
+    const sessionKey = this.getFullKey(`session:${sessionId}`);
+    const serializedSession = this.serializer.serialize(updatedSession);
+    await this.set(sessionKey, serializedSession, { ttl: 24 * 60 * 60 });
   }
-  
+
+  async deleteSession(sessionId: string): Promise<void> {
+    const session = await this.getSession(sessionId);
+    if (!session) return;
+    
+    const sessionKey = this.getFullKey(`session:${sessionId}`);
+    const userSessionsKey = this.getFullKey(`user:sessions:${session.userId}`);
+    
+    await this.delete(sessionKey);
+    await this.sRem(userSessionsKey, sessionId);
+  }
+
+  async getUserSessions(userId: string): Promise<UserSession[]> {
+    const userSessionsKey = this.getFullKey(`user:sessions:${userId}`);
+    const sessionIds = await this.sMembers(userSessionsKey);
+    
+    const sessions: UserSession[] = [];
+    for (const sessionId of sessionIds) {
+      const session = await this.getSession(sessionId);
+      if (session) {
+        sessions.push(session);
+      } else {
+        await this.sRem(userSessionsKey, sessionId);
+      }
+    }
+    
+    return sessions;
+  }
+
+  async logSessionActivity(activity: Omit<SessionActivity, 'timestamp'>): Promise<void> {
+    const activityLog: SessionActivity = {
+      ...activity,
+      timestamp: new Date().toISOString()
+    };
+    
+    const activityKey = this.getFullKey(`session:activity:${activity.sessionId}`);
+    const serializedActivity = this.serializer.serialize(activityLog);
+    
+    await this.lPush(activityKey, serializedActivity);
+    await this.lTrim(activityKey, 0, 99);
+    await this.expire(activityKey, 24 * 60 * 60);
+  }
+
+  async getSessionActivity(sessionId: string, limit?: number): Promise<SessionActivity[]> {
+    const activityKey = this.getFullKey(`session:activity:${sessionId}`);
+    const serializedActivities = await this.lRange(activityKey, 0, (limit || 100) - 1);
+    
+    const activities: SessionActivity[] = [];
+    for (const serialized of serializedActivities) {
+      try {
+        activities.push(this.serializer.deserialize<SessionActivity>(serialized));
+      } catch (error) {
+        console.error('Error deserializing session activity:', error);
+      }
+    }
+    
+    return activities;
+  }
+
+  // ============================================================================
+  // OPÉRATIONS PAR LOT
+  // ============================================================================
+
+  async batchGet(keys: string[]): Promise<Array<string | null>> {
+    await this.ensureConnected();
+    const fullKeys = keys.map(key => this.getFullKey(key));
+    return await this.client.mGet(fullKeys);
+  }
+
+  async batchSet(entries: Array<{ key: string; value: string; options?: RedisOperationOptions }>): Promise<void> {
+    await this.ensureConnected();
+    const pipeline = this.client.multi();
+    
+    for (const entry of entries) {
+      const fullKey = this.getFullKey(entry.key);
+      if (entry.options?.ttl) {
+        pipeline.setEx(fullKey, entry.options.ttl, entry.value);
+      } else {
+        pipeline.set(fullKey, entry.value);
+      }
+    }
+    
+    await pipeline.exec();
+  }
+
+  async batchDelete(keys: string[]): Promise<number> {
+    if (keys.length === 0) return 0;
+    
+    await this.ensureConnected();
+    const fullKeys = keys.map(key => this.getFullKey(key));
+    return await this.client.del(fullKeys);
+  }
+
+  // ============================================================================
+  // SURVEILLANCE ET MAINTENANCE
+  // ============================================================================
+
+  async getStats(): Promise<RedisStats> {
+    await this.ensureConnected();
+    
+    const info = await this.info();
+    const lines = info.split('\r\n');
+    const stats: Partial<RedisStats> = {
+      connected: this.connected,
+      timestamp: new Date().toISOString()
+    };
+    
+    for (const line of lines) {
+      if (line.includes(':')) {
+        const [key, value] = line.split(':');
+        switch (key) {
+          case 'uptime_in_seconds':
+            stats.uptime = parseInt(value);
+            break;
+          case 'used_memory':
+            if (stats.server) {
+              stats.server.usedMemory = parseInt(value);
+            } else {
+              stats.server = { usedMemory: parseInt(value) } as any;
+            }
+            break;
+          case 'total_connections_received':
+            if (stats.server) {
+              stats.server.connectedClients = parseInt(value);
+            }
+            break;
+        }
+      }
+    }
+    
+    return stats as RedisStats;
+  }
+
+  async flushDb(): Promise<void> {
+    await this.ensureConnected();
+    await this.client.flushDb();
+  }
+
+  async analyzeKeyUsage(pattern?: string): Promise<Record<string, any>> {
+    const keys = await this.keys(pattern || '*');
+    const analysis = {
+      totalKeys: keys.length,
+      keysByType: {} as Record<string, number>,
+      memoryUsage: 0,
+      expiredKeys: 0
+    };
+    
+    for (const key of keys.slice(0, 1000)) {
+      const fullKey = this.getFullKey(key);
+      const type = await this.client.type(fullKey);
+      analysis.keysByType[type] = (analysis.keysByType[type] || 0) + 1;
+      
+      const ttl = await this.ttl(key);
+      if (ttl === -1) analysis.expiredKeys++;
+    }
+    
+    return analysis;
+  }
+
+  async generateReport(type: 'usage' | 'performance' | 'sessions' | 'logs'): Promise<any> {
+    switch (type) {
+      case 'usage':
+        return this.analyzeKeyUsage();
+      case 'performance':
+        return this.cacheStats;
+      case 'sessions':
+        return { totalSessions: await this.keys('session:*').then(keys => keys.length) };
+      case 'logs':
+        return { totalLogs: await this.zCard('auth:logs:global') };
+      default:
+        throw new Error(`Unknown report type: ${type}`);
+    }
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      const pong = await this.ping();
+      return pong === 'PONG';
+    } catch {
+      return false;
+    }
+  }
+
+  async validateConnection(): Promise<ValidationResult> {
+    try {
+      await this.ping();
+      return { valid: true };
+    } catch (error) {
+      return {
+        valid: false,
+        errors: [error instanceof Error ? error.message : String(error)]
+      };
+    }
+  }
+
+  // ============================================================================
+  // UTILITAIRES
+  // ============================================================================
+
+  getKeyBuilder(): RedisKeyBuilder {
+    return this.keyBuilder;
+  }
+
+  getSerializer(): RedisSerializer {
+    return this.serializer;
+  }
+
+  // ============================================================================
+  // MÉTHODES PRIVÉES
+  // ============================================================================
+
+  private generateId(): string {
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  private async zCard(key: string): Promise<number> {
+    const fullKey = this.getFullKey(key);
+    return await this.client.zCard(fullKey);
+  }
+
+  private async zRemRangeByRank(key: string, start: number, stop: number): Promise<number> {
+    const fullKey = this.getFullKey(key);
+    return await this.client.zRemRangeByRank(fullKey, start, stop);
+  }
+
+  private matchesFilter(log: AuthorizationLog, filter: LogFilter): boolean {
+    if (filter.resourceType && log.resourceType !== filter.resourceType) return false;
+    if (filter.action && log.action !== filter.action) return false;
+    if (filter.allowed !== undefined && log.allowed !== filter.allowed) return false;
+    if (filter.dateFrom && log.timestamp < filter.dateFrom) return false;
+    if (filter.dateTo && log.timestamp > filter.dateTo) return false;
+    
+    return true;
+  }
+
+  private updateCacheStats(hit: boolean, responseTime: number): void {
+    this.cacheStats.totalRequests++;
+    if (hit) {
+      this.cacheStats.cacheHits++;
+    } else {
+      this.cacheStats.cacheMisses++;
+    }
+    this.cacheStats.cacheHitRate = (this.cacheStats.cacheHits / this.cacheStats.totalRequests) * 100;
+    this.cacheStats.averageResponseTime = 
+      (this.cacheStats.averageResponseTime + responseTime) / 2;
+  }
+
+  // ============================================================================
+  // FERMETURE
+  // ============================================================================
+
   async close(): Promise<void> {
     if (this.connected) {
       await this.client.quit();
       this.connected = false;
+    }
+  }
+}
+
+// ============================================================================
+// CLASSES UTILITAIRES
+// ============================================================================
+
+class RedisKeyBuilderImpl implements RedisKeyBuilder {
+  private parts: string[] = [];
+  
+  constructor(private prefix?: string) {
+    if (prefix) this.parts.push(prefix);
+  }
+
+  namespace(ns: string): RedisKeyBuilder {
+    this.parts.push(ns);
+    return this;
+  }
+
+  type(type: string): RedisKeyBuilder {
+    this.parts.push(type);
+    return this;
+  }
+
+  id(id: string): RedisKeyBuilder {
+    this.parts.push(id);
+    return this;
+  }
+
+  tag(tag: string): RedisKeyBuilder {
+    this.parts.push(`tag:${tag}`);
+    return this;
+  }
+
+  userKey(userId: string): RedisKeyBuilder {
+    this.parts.push('user', userId);
+    return this;
+  }
+
+  sessionKey(sessionId: string): RedisKeyBuilder {
+    this.parts.push('session', sessionId);
+    return this;
+  }
+
+  cacheKey(key: string): RedisKeyBuilder {
+    this.parts.push('cache', key);
+    return this;
+  }
+
+  logKey(logId: string): RedisKeyBuilder {
+    this.parts.push('log', logId);
+    return this;
+  }
+
+  build(): string {
+    return this.parts.join(':');
+  }
+
+  reset(): RedisKeyBuilder {
+    this.parts = this.prefix ? [this.prefix] : [];
+    return this;
+  }
+}
+
+class RedisSerializerImpl implements RedisSerializer {
+  serialize<T>(data: T): string {
+    return JSON.stringify(data);
+  }
+
+  deserialize<T>(data: string): T {
+    return JSON.parse(data);
+  }
+
+  canSerialize(data: any): boolean {
+    try {
+      JSON.stringify(data);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

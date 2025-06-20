@@ -1,57 +1,60 @@
 /**
- * Interface pour le service d'authentification principal
+ * Interface principale pour l'authentification et l'autorisation
+ * Version simplifiée avec fonctionnalités essentielles
  */
-export interface IAuthenticationService {
-  login(username: string, password: string): Promise<AuthResponse>;
-  refreshToken(refreshToken: string): Promise<AuthResponse>;
-  validateToken(token: string): Promise<TokenValidationResult>;
-  validateTokenEnriched(token: string): Promise<EnrichedTokenValidationResult>;
-  getClientCredentialsToken(): Promise<AuthResponse>;
-  logout(token: string): Promise<void>;
-  getUserInfo(userId: string): Promise<UserInfo | null>;
-  getUserRoles(userId: string): Promise<string[]>;
-  invalidateUserCache(userId: string): Promise<void>;
+
+import type {
+  OperationOptions,
+  OperationResult,
+  ValidationResult,
+  AuthorizationResult,
+  UserId,
+  SessionId,
+  Priority
+} from './common.js';
+
+// ============================================================================
+// TYPES DE BASE ET ENUMS
+// ============================================================================
+
+export type AuthEventType = 'login' | 'logout' | 'token_refresh' | 'token_validation' | 'authorization_check' | 'error';
+export type UserState = 'active' | 'inactive' | 'suspended' | 'locked';
+
+export enum ErrorCode {
+  INVALID_CREDENTIALS = 'INVALID_CREDENTIALS',
+  TOKEN_INVALID = 'TOKEN_INVALID',
+  TOKEN_EXPIRED = 'TOKEN_EXPIRED',
+  INSUFFICIENT_PERMISSIONS = 'INSUFFICIENT_PERMISSIONS',
+  SERVICE_UNAVAILABLE = 'SERVICE_UNAVAILABLE',
+  CONFIGURATION_ERROR = 'CONFIGURATION_ERROR',
+  VALIDATION_ERROR = 'VALIDATION_ERROR',
+  NETWORK_ERROR = 'NETWORK_ERROR',
+  SERVICE_TIMEOUT = 'SERVICE_TIMEOUT',
+  AUTH_USER_NOT_FOUND = 'AUTH_USER_NOT_FOUND'
 }
 
-/**
- * Réponse d'authentification standard
- */
-export interface AuthResponse {
-  access_token: string;
-  refresh_token?: string;
-  token_type: string;
-  expires_in: number;
+// ============================================================================
+// CONFIGURATION KEYCLOAK
+// ============================================================================
+
+export interface KeycloakConfig {
+  url: string;
+  realm: string;
+  clientId: string;
+  clientSecret: string;
+  timeout?: number;
+  adminClientId?: string;
+  adminClientSecret?: string;
+  enableCache?: boolean;
+  cacheExpiry?: number;
+  retryAttempts?: number;
+  retryDelay?: number;
 }
 
-/**
- * Résultat de validation de token basique
- */
-export interface TokenValidationResult {
-  valid: boolean;
-  userId?: string;
-  email?: string;
-  givenName?: string;
-  familyName?: string;
-  roles?: string[];
-}
+// ============================================================================
+// STRUCTURES DE DONNÉES UTILISATEUR
+// ============================================================================
 
-/**
- * Résultat de validation de token enrichi avec informations complètes
- */
-export interface EnrichedTokenValidationResult {
-  valid: boolean;
-  userInfo?: UserInfo;
-  userId?: string;
-  email?: string;
-  givenName?: string;
-  familyName?: string;
-  roles?: string[];
-  rawKeycloakData?: Record<string, any>;
-}
-
-/**
- * Informations utilisateur complètes compatibles OPA
- */
 export interface UserInfo {
   sub: string;
   email?: string;
@@ -60,100 +63,193 @@ export interface UserInfo {
   preferred_username?: string;
   roles: string[];
   organization_ids?: string[];
-  state?: string;
+  state?: UserState;
   attributes?: UserAttributes;
   resource_access?: Record<string, { roles: string[] }>;
   realm_access?: { roles: string[] };
+  created_at?: string;
+  updated_at?: string;
+  email_verified?: boolean;
 }
 
-/**
- * Attributs utilisateur étendus pour OPA
- */
 export interface UserAttributes {
-  // Attributs de base
   department?: string;
   clearanceLevel?: number;
   contractExpiryDate?: string;
   managerId?: string;
-  
-  // Attributs professionnels
   jobTitle?: string;
   businessUnit?: string;
-  territorialJurisdiction?: string;
-  technicalExpertise?: string;
-  hierarchyLevel?: number;
   workLocation?: string;
   employmentType?: string;
-  
-  // Attributs de sécurité et vérification
   verificationStatus?: string;
   riskScore?: number;
-  certifications?: string[];
-  accessHistory?: Record<string, any>;
-  
-  // Attributs personnels
   firstName?: string;
   lastName?: string;
   phoneNumber?: string;
-  nationality?: string;
-  dateOfBirth?: string;
-  gender?: string;
-  
-  // Attributs Keycloak personnalisés
   [key: string]: any;
 }
 
-/**
- * Configuration pour les tests et la surveillance
- */
+export interface KeycloakUserData {
+  id: string;
+  username: string;
+  email?: string;
+  emailVerified?: boolean;
+  firstName?: string;
+  lastName?: string;
+  enabled: boolean;
+  createdTimestamp?: number;
+  attributes?: Record<string, string[]>;
+  groups?: string[];
+  realmRoles?: string[];
+  clientRoles?: Record<string, string[]>;
+}
+
+export interface KeycloakTokenIntrospection {
+  active: boolean;
+  sub?: string;
+  email?: string;
+  email_verified?: boolean;
+  given_name?: string;
+  family_name?: string;
+  preferred_username?: string;
+  realm_access?: { roles: string[] };
+  resource_access?: Record<string, { roles: string[] }>;
+  scope?: string;
+  client_id?: string;
+  username?: string;
+  token_type?: string;
+  exp?: number;
+  iat?: number;
+  aud?: string | string[];
+  iss?: string;
+  [key: string]: any;
+}
+
+// ============================================================================
+// INTERFACES D'AUTHENTIFICATION
+// ============================================================================
+
+export interface IAuthenticationService {
+  // Authentification de base
+  login(username: string, password: string): Promise<AuthResponse>;
+  refreshToken(refreshToken: string): Promise<AuthResponse>;
+  logout(token: string): Promise<void>;
+  
+  // Validation de tokens
+  validateToken(token: string): Promise<TokenValidationResult>;
+  
+  // Tokens de service
+  getClientCredentialsToken(): Promise<AuthResponse>;
+  
+  // Gestion des utilisateurs
+  getUserInfo(userId: string): Promise<UserInfo | null>;
+  getUserRoles(userId: string): Promise<string[]>;
+  
+  // Cache
+  invalidateUserCache(userId: string): Promise<void>;
+  
+  // Tests de connectivité
+  testKeycloakConnection(): Promise<ConnectionTestResult>;
+  testRedisConnection(): Promise<ConnectionTestResult>;
+  testOPAConnection(): Promise<ConnectionTestResult>;
+  
+  // Autorisation
+  checkPermission(token: string, resourceId: string, resourceType: string, action: string, context?: Record<string, any>): Promise<boolean>;
+  checkPermissionDetailed(token: string, resourceId: string, resourceType: string, action: string, context?: Record<string, any>): Promise<AuthorizationResult>;
+  
+  // Métriques et surveillance
+  getMetrics(): Record<string, any>;
+  resetMetrics(): void;
+  
+  // Gestion des événements
+  addEventListener(eventType: AuthEventType, callback: EventCallback): void;
+  removeEventListener(eventType: AuthEventType, callback: EventCallback): void;
+  
+  // Fermeture
+  close(): Promise<void>;
+}
+
+export interface KeycloakClient {
+  validateToken(token: string): Promise<UserInfo>;
+  getRoles(userId: string): Promise<string[]>;
+  getUserInfo(userId: string): Promise<UserInfo>;
+  getAdminToken(): Promise<string>;
+  login?(username: string, password: string): Promise<AuthResponse>;
+  refreshToken?(refreshToken: string): Promise<AuthResponse>;
+  logout?(token: string): Promise<void>;
+  getClientCredentialsToken?(): Promise<AuthResponse>;
+  healthCheck?(): Promise<boolean>;
+}
+
+export interface KeycloakClientExtended extends KeycloakClient {
+  validateTokenRaw(token: string): Promise<KeycloakTokenIntrospection>;
+  getUserData(userId: string): Promise<KeycloakUserData>;
+  refreshAdminToken(): Promise<string>;
+  createUser(userData: Partial<KeycloakUserData>): Promise<string>;
+  updateUser(userId: string, userData: Partial<KeycloakUserData>): Promise<void>;
+  deleteUser(userId: string): Promise<void>;
+  searchUsers(query: string, limit?: number): Promise<KeycloakUserData[]>;
+  getUserByUsername(username: string): Promise<KeycloakUserData | null>;
+  getUserByEmail(email: string): Promise<KeycloakUserData | null>;
+  healthCheck(): Promise<boolean>;
+  getServerInfo(): Promise<any>;
+  validateConfig(): ValidationResult;
+  testConnection(): Promise<ConnectionTestResult>;
+  close(): Promise<void>;
+}
+
+// ============================================================================
+// RÉPONSES ET RÉSULTATS
+// ============================================================================
+
+export interface AuthResponse {
+  access_token: string;
+  refresh_token?: string;
+  token_type: string;
+  expires_in: number;
+  scope?: string;
+  session_id?: string;
+  session_state?: string;
+}
+
+export interface TokenValidationResult {
+  valid: boolean;
+  userId?: string;
+  email?: string;
+  givenName?: string;
+  familyName?: string;
+  roles?: string[];
+  expiresAt?: string;
+  issuedAt?: string;
+  clientId?: string;
+  scope?: string[];
+}
+
+export interface EnrichedTokenValidationResult {
+  valid: boolean;
+  userInfo?: UserInfo;
+  userId?: string;
+  email?: string;
+  givenName?: string;
+  familyName?: string;
+  roles?: string[];
+  rawKeycloakData?: KeycloakTokenIntrospection;
+}
+
 export interface ConnectionTestResult {
   connected: boolean;
   info?: string;
   error?: string;
   latency?: number;
   details?: Record<string, any>;
+  timestamp?: string;
+  version?: string;
 }
 
-/**
- * Interface pour le cache utilisateur
- */
-export interface UserCacheEntry {
-  userInfo: UserInfo;
-  roles: string[];
-  cachedAt: string;
-  expiresAt: string;
-}
+// ============================================================================
+// CONFIGURATION ET OPTIONS
+// ============================================================================
 
-/**
- * Interface pour les logs d'authentification
- */
-export interface AuthenticationLog {
-  userId: string;
-  action: 'login' | 'logout' | 'token_refresh' | 'token_validation' | 'cache_invalidation';
-  success: boolean;
-  timestamp: string;
-  ip?: string;
-  userAgent?: string;
-  error?: string;
-  details?: Record<string, any>;
-}
-
-/**
- * Interface pour la gestion des sessions
- */
-export interface SessionInfo {
-  sessionId: string;
-  userId: string;
-  createdAt: string;
-  lastActivity: string;
-  ip?: string;
-  userAgent?: string;
-  active: boolean;
-}
-
-/**
- * Options de configuration pour l'authentification
- */
 export interface AuthenticationOptions {
   enableCache?: boolean;
   cacheExpiry?: number;
@@ -161,4 +257,27 @@ export interface AuthenticationOptions {
   enableSessionTracking?: boolean;
   maxSessions?: number;
   tokenValidationStrategy?: 'introspection' | 'jwt_decode' | 'userinfo';
+  development?: {
+    enableDebugLogging?: boolean;
+    mockMode?: boolean;
+    bypassAuthentication?: boolean;
+  };
 }
+
+// ============================================================================
+// ÉVÉNEMENTS ET LOGS
+// ============================================================================
+
+export interface AuthEvent {
+  id: string;
+  type: AuthEventType;
+  userId?: string;
+  username?: string;
+  success: boolean;
+  timestamp: string;
+  duration?: number;
+  error?: string;
+  details?: Record<string, any>;
+}
+
+export type EventCallback = (event: AuthEvent) => Promise<void> | void;

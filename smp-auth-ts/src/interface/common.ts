@@ -1,26 +1,278 @@
+/**
+ * Interface commune avec types partagés et configuration centralisée
+ * Types utilisés par tous les modules de smp-auth-ts
+ */
+
+import type { KeycloakConfig } from './auth.interface.js';
+import type { OPAConfig } from './opa.interface.js';
+import type { RedisConfig } from './redis.interface.js';
+
+// ============================================================================
+// CONFIGURATION GLOBALE
+// ============================================================================
+
+/**
+ * Configuration complète du système d'authentification
+ */
 export interface AuthConfig {
-    keycloak: import('./keycloak.interface.js').KeycloakConfig;
-    opa: import('./opa.interface.js').OPAConfig;
-    redis: import('./redis.interface.js').RedisConfig;
-  }
+  keycloak: KeycloakConfig;
+  opa: OPAConfig;
+  redis: RedisConfig;
+  global?: {
+    environment?: 'development' | 'staging' | 'production' | 'test';
+    logLevel?: 'debug' | 'info' | 'warn' | 'error';
+    enableMetrics?: boolean;
+    enableHealthCheck?: boolean;
+  };
+}
+
+/**
+ * Configuration par défaut basée sur les variables d'environnement
+ */
+export interface DefaultConfig {
+  KEYCLOAK_URL: string;
+  KEYCLOAK_REALM: string;
+  KEYCLOAK_CLIENT_ID: string;
+  KEYCLOAK_CLIENT_SECRET: string;
+  KEYCLOAK_TIMEOUT: string;
+  OPA_URL: string;
+  OPA_POLICY_PATH: string;
+  OPA_TIMEOUT: string;
+  REDIS_HOST: string;
+  REDIS_PORT: string;
+  REDIS_PASSWORD?: string;
+  REDIS_DB: string;
+  REDIS_PREFIX: string;
+  REDIS_TLS: string;
+}
+
+// ============================================================================
+// TYPES DE BASE PARTAGÉS
+// ============================================================================
+
+export type UserId = string;
+export type ResourceId = string;
+export type SessionId = string;
+export type CorrelationId = string;
+export type OrganizationId = string;
+
+export type Action = string; // 'create', 'read', 'update', 'delete', etc.
+export type ResourceType = string; // 'document', 'project', 'user', etc.
+export type EntityState = 'active' | 'inactive' | 'pending' | 'archived' | 'deleted';
+export type Priority = 'low' | 'medium' | 'high' | 'critical';
+export type OperationStatus = 'success' | 'failure' | 'pending' | 'cancelled' | 'timeout';
+
+// ============================================================================
+// DEMANDES ET RÉSULTATS D'AUTORISATION
+// ============================================================================
+
+export interface AuthorizationRequest {
+  userId: UserId;
+  resourceId: ResourceId;
+  resourceType: ResourceType;
+  action: Action;
+  context?: AuthorizationContext;
+  timestamp?: string;
+  correlationId?: CorrelationId;
+}
+
+export interface AuthorizationContext {
+  currentDate?: string;
+  businessHours?: boolean;
+  ip?: string;
+  userAgent?: string;
+  organizationId?: OrganizationId;
+  departmentId?: string;
+  riskScore?: number;
+  securityLevel?: string;
+  [key: string]: any;
+}
+
+export interface AuthorizationResult {
+  allowed: boolean;
+  reason?: string;
+  timestamp?: string;
+  evaluationTime?: number;
+  cached?: boolean;
+  correlationId?: CorrelationId;
+}
+
+// ============================================================================
+// OPÉRATIONS ET RÉSULTATS GÉNÉRIQUES
+// ============================================================================
+
+export interface OperationOptions {
+  timeout?: number;
+  retryAttempts?: number;
+  retryDelay?: number;
+  correlationId?: CorrelationId;
+  metadata?: Record<string, any>;
+}
+
+export interface OperationResult<T = any> {
+  success: boolean;
+  data?: T;
+  error?: OperationError;
+  timestamp: string;
+  duration?: number;
+  correlationId?: CorrelationId;
+}
+
+export interface OperationError {
+  code: string;
+  message: string;
+  details?: Record<string, any>;
+  stack?: string;
+  correlationId?: CorrelationId;
+  timestamp?: string;
+  retryable?: boolean;
+}
+
+// ============================================================================
+// PAGINATION ET FILTRAGE
+// ============================================================================
+
+export interface PaginationOptions {
+  limit?: number;
+  offset?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  totalCount: number;
+  hasMore: boolean;
+  pagination: PaginationOptions;
+}
+
+export interface FilterOptions {
+  search?: string;
+  filters?: Record<string, any>;
+  dateRange?: {
+    from: string;
+    to: string;
+  };
+  status?: EntityState[];
+}
+
+// ============================================================================
+// CACHE ET PERFORMANCES
+// ============================================================================
+
+export interface CacheOptions {
+  ttl?: number;
+  version?: string;
+  tags?: string[];
+  namespace?: string;
+}
+
+export interface PerformanceMetrics {
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  averageResponseTime: number;
+  cacheHits: number;
+  cacheMisses: number;
+  cacheHitRate: number;
+  errorRate: number;
+  startTime: string;
+  lastUpdate: string;
+  uptime: number;
+}
+
+// ============================================================================
+// VALIDATION
+// ============================================================================
+
+export interface ValidationResult {
+  valid: boolean;
+  errors?: string[];
+  warnings?: string[];
+  data?: any;
+}
+
+// ============================================================================
+// ÉVÉNEMENTS SYSTÈME
+// ============================================================================
+
+export interface SystemEvent {
+  id: string;
+  type: string;
+  source: string;
+  timestamp: string;
+  data: Record<string, any>;
+  correlationId?: CorrelationId;
+  priority?: Priority;
+}
+
+// ============================================================================
+// TYPES UTILITAIRES
+// ============================================================================
+
+export type TransformFunction<T, U> = (input: T) => U | Promise<U>;
+export type ValidationFunction<T> = (input: T) => boolean | ValidationResult;
+export type CallbackFunction<T = any> = (error?: Error, result?: T) => void;
+export type EventHandler<T = any> = (event: T) => void | Promise<void>;
+
+// ============================================================================
+// TYPES D'ÉVÉNEMENTS ET CALLBACKS MANQUANTS
+// ============================================================================
+
+
+// ============================================================================
+// CONSTANTES
+// ============================================================================
+
+export const DEFAULT_TIMEOUTS = {
+  CONNECTION: 10000,
+  REQUEST: 30000,
+  TOKEN_VALIDATION: 5000,
+  AUTHORIZATION_CHECK: 10000,
+  CACHE_OPERATION: 1000,
+  HEALTH_CHECK: 5000
+} as const;
+
+export const DEFAULT_RETRY = {
+  ATTEMPTS: 3,
+  DELAY: 1000,
+  BACKOFF_FACTOR: 2,
+  MAX_DELAY: 30000
+} as const;
+
+export const DEFAULT_CACHE = {
+  TTL: 3600,
+  MAX_SIZE: 1000,
+  CLEANUP_INTERVAL: 300000
+} as const;
+
+export const ERROR_CODES = {
+  // Erreurs d'authentification
+  AUTH_INVALID_CREDENTIALS: 'AUTH_001',
+  AUTH_TOKEN_EXPIRED: 'AUTH_002',
+  AUTH_TOKEN_INVALID: 'AUTH_003',
+  AUTH_USER_NOT_FOUND: 'AUTH_004',
   
-  /**
-   * Résultat d'une vérification d'autorisation
-   */
-  export interface AuthorizationResult {
-    allowed: boolean;      // Décision d'autorisation
-    reason?: string;       // Raison de la décision (optionnel)
-  }
+  // Erreurs d'autorisation
+  AUTHZ_ACCESS_DENIED: 'AUTHZ_001',
+  AUTHZ_INSUFFICIENT_PERMISSIONS: 'AUTHZ_002',
+  AUTHZ_RESOURCE_NOT_FOUND: 'AUTHZ_003',
+  AUTHZ_POLICY_ERROR: 'AUTHZ_004',
   
-  /**
-   * Demande d'autorisation
-   */
-  export interface AuthorizationRequest {
-    userId: string;        // ID de l'utilisateur
-    resourceId: string;    // ID de la ressource
-    resourceType: string;  // Type de ressource
-    action: string;        // Action demandée
-    userAttributes?: Record<string, any>;    // Attributs utilisateur (optionnel)
-    resourceAttributes?: Record<string, any>; // Attributs ressource (optionnel)
-    context?: Record<string, any>;           // Contexte supplémentaire (optionnel)
-  }
+  // Erreurs de service
+  SERVICE_UNAVAILABLE: 'SVC_001',
+  SERVICE_TIMEOUT: 'SVC_002',
+  SERVICE_OVERLOADED: 'SVC_003',
+  
+  // Erreurs de configuration
+  CONFIG_INVALID: 'CFG_001',
+  CONFIG_MISSING: 'CFG_002',
+  CONFIG_CONNECTION_FAILED: 'CFG_003',
+  
+  // Erreurs de validation
+  VALIDATION_FAILED: 'VAL_001',
+  
+  // Erreurs de cache
+  CACHE_CONNECTION_FAILED: 'CACHE_001',
+  CACHE_OPERATION_FAILED: 'CACHE_002'
+} as const;
