@@ -1,13 +1,96 @@
 global:
   scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'api-gateway-cluster'
+    monitor: 'krakend-apollo-monitor'
+    environment: 'production'
+
+rule_files:
+  - "rules/gateway_rules.yml"
+  - "rules/alerting_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
 scrape_configs:
+  # Prometheus lui-même
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
+    scrape_interval: 5s
+    metrics_path: /metrics
+
+  # KrakenD Metrics
+  - job_name: 'krakend'
+    static_configs:
+      - targets: ['krakend:8091']
+    scrape_interval: 10s
+    metrics_path: /metrics
+    scrape_timeout: 5s
+    honor_labels: true
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'krakend_(.*)'
+        target_label: service
+        replacement: 'krakend'
+
+  # Apollo Gateway Metrics  
   - job_name: 'apollo-gateway'
     static_configs:
       - targets: ['apollo-gateway:4000']
+    scrape_interval: 10s
     metrics_path: /metrics
+    scrape_timeout: 5s
+    honor_labels: true
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'apollo_gateway_(.*)'
+        target_label: service
+        replacement: 'apollo-gateway'
+
+  # OpenTelemetry Collector
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8889']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # Node Exporter (métriques système)
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+    metrics_path: /metrics
+
+  # Jaeger Metrics
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Health checks spécialisés
+  - job_name: 'krakend-health'
+    static_configs:
+      - targets: ['krakend:8080']
+    scrape_interval: 30s
+    metrics_path: /health
+    scheme: http
+
+  - job_name: 'apollo-health'
+    static_configs:
+      - targets: ['apollo-gateway:4000']
+    scrape_interval: 30s
+    metrics_path: /health
+    scheme: http
+
+  # Services backend
+  - job_name: 'mu-auth'
+    static_configs:
+      - targets: ['mu-auth:3001']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    scrape_timeout: 5s

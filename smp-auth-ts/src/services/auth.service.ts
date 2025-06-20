@@ -19,7 +19,6 @@ export class AuthService {
   
   /**
    * Crée une nouvelle instance du service d'authentification
-   * @param config Configuration (optionnel, sinon chargée depuis l'environnement)
    */
   constructor(config?: AuthConfig) {
     this.config = config || loadConfig();

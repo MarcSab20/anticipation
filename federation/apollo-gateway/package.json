@@ -1,21 +1,32 @@
 {
-    "name": "apollo-gateway-simple",
+    "name": "apollo-gateway-federation",
     "version": "1.0.0",
+    "description": "Apollo Federation Gateway with distributed tracing",
     "main": "src/index.js",
     "type": "module",
     "scripts": {
-        "start": "node src/index.js"
+      "start": "node src/index.js",
+      "dev": "nodemon src/index.js",
+      "test": "jest"
     },
     "dependencies": {
-        "@apollo/gateway": "2.10.2",
-        "@apollo/server": "4.12.0",
-        "body-parser": "1.20.3",
-        "cors": "2.8.5",
-        "express": "4.21.2",
-        "graphql": "16.11.0",
-        "prom-client": "15.1.0"
+      "@apollo/server": "^4.9.5",
+      "@apollo/gateway": "^2.5.7",
+      "express": "^4.18.2",
+      "cors": "^2.8.5",
+      "body-parser": "^1.20.2",
+      "prom-client": "^15.0.0",
+      "uuid": "^9.0.1",
+      "node-fetch": "^3.3.0",
+      "@opentelemetry/sdk-node": "^0.46.0",
+      "@opentelemetry/auto-instrumentations-node": "^0.41.0",
+      "@opentelemetry/resources": "^1.18.1",
+      "@opentelemetry/semantic-conventions": "^1.18.1",
+      "@opentelemetry/exporter-trace-otlp-grpc": "^0.46.0",
+      "@opentelemetry/exporter-metrics-otlp-grpc": "^0.46.0",
+      "@opentelemetry/sdk-metrics": "^1.18.1"
     },
-    "engines": {
-        "node": ">=18.0.0"
+    "devDependencies": {
+      "nodemon": "^3.0.2"
     }
-}
+  }

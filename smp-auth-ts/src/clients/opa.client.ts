@@ -23,7 +23,7 @@ export class OPAClientImpl implements OPAClient {
   
   /**
    * Vérifie si une action est autorisée selon les politiques
-   * @param input Données d'entrée pour l'évaluation de politique
+   * Données d'entrée pour l'évaluation de politique
    */
   async checkPermission(input: OPAInput): Promise<OPAResult> {
     try {
@@ -72,8 +72,8 @@ export class OPAClientImpl implements OPAClient {
   }
   
   /**
-   * @param policyId Identifiant de la politique (chemin relatif)
-   * @param policy Contenu de la politique (code Rego)
+   * Identifiant de la politique (chemin relatif)
+   * Contenu de la politique (code Rego)
    */
   async updatePolicy(policyId: string, policy: string): Promise<void> {
     try {
@@ -93,7 +93,7 @@ export class OPAClientImpl implements OPAClient {
   
   /**
    * Récupère une politique existante
-   * @param policyId Identifiant de la politique (chemin relatif)
+   * Identifiant de la politique (chemin relatif)
    */
   async getPolicy(policyId: string): Promise<string> {
     try {

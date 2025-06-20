@@ -1,4 +1,3 @@
-// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { AuthorizationModule } from './authorization/authorization.module.js';
 import { AuthModule } from './auth/auth.module.js'; // Nouveau module

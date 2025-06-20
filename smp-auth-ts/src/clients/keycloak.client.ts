@@ -1,5 +1,3 @@
-// smp-auth-ts/src/clients/keycloak.client.ts
-
 import axios from 'axios';
 import { KeycloakConfig } from '../interface/keycloak.interface.js';
 import { UserInfo } from '../interface/auth.interface.js';

@@ -27,8 +27,7 @@ async function bootstrap() {
     options: {
       package: 'authentication',
       protoPath: join(__dirname, '../protos/authentication.proto'),
-      url: process.env.AUTHENTICATION_GRPC_URL || '0.0.0.0:50051', // Port différent
-      maxSendMessageLength: 1024 * 1024 * 4,
+      url: process.env.AUTHENTICATION_GRPC_URL || '0.0.0.0:50051',
       maxReceiveMessageLength: 1024 * 1024 * 4,
     },
   });

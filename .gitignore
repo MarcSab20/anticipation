@@ -1,2 +1,7 @@
 database
 .env
+mu-organization
+run 
+monitoring
+grafana
+krakend

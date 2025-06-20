@@ -21,7 +21,10 @@ deny_reasons = {
     "external_ip": "Accès refusé - Adresse IP externe, connexion non autorisée pour cette action",
     "different_department": "Accès refusé - Accès limité aux ressources de votre département",
     "not_resource_owner": "Accès refusé - Seul le propriétaire peut effectuer cette action",
-    "no_organization_role": "Accès refusé - Rôle d'organisation requis"
+    "no_organization_role": "Accès refusé - Rôle d'organisation requis",
+    "self_invitation": "Accès refusé - Impossible de s'inviter soi-même",
+    "already_member": "Accès refusé - L'utilisateur est déjà membre de l'organisation",
+    "too_many_invitations": "Accès refusé - Trop d'invitations en attente pour cette organisation"
 }
 
 # Raisons d'autorisation
@@ -34,7 +37,10 @@ allow_reasons = {
     "non_confidential": "Autorisé - Ressource non confidentielle",
     "sufficient_clearance": "Autorisé - Niveau d'habilitation suffisant",
     "internal_ip": "Autorisé - Connexion depuis IP interne",
-    "valid_state_transition": "Autorisé - Transition d'état valide"
+    "valid_state_transition": "Autorisé - Transition d'état valide",
+    "invitation_access": "Autorisé - Accès public pour vérification d'invitation",
+    "self_organization_access": "Autorisé - Accès à ses propres organisations",
+    "organization_member_access": "Autorisé - Membre de l'organisation"
 }
 
 # Déterminer la raison du refus
@@ -77,6 +83,18 @@ deny_reason = deny_reasons["org_deletion_denied"] if {
     
     # Aucune des organisations de l'utilisateur ne correspond
     not org_id_match
+} else = deny_reasons["self_invitation"] if {
+    input.action == "invite"
+    input.resource.type == "organization"
+    input.context.targetEmail == input.user.attributes.email
+} else = deny_reasons["already_member"] if {
+    input.action == "invite"
+    input.resource.type == "organization"
+    input.context.targetUserAlreadyMember == true
+} else = deny_reasons["too_many_invitations"] if {
+    input.action == "invite"
+    input.resource.type == "organization"
+    input.context.pendingInvitationsCount > 10
 }
 
 org_id_match if {
@@ -105,7 +123,17 @@ allow_reason = allow_reasons["platform_admin"] if {
     internal_ip_check
 } else = allow_reasons["valid_state_transition"] if {
     valid_state_transition
-}
+} else = allow_reasons["invitation_access"] if {
+    input.action == "verify_invitation"
+    input.resource.type == "organization"
+} else = allow_reasons["self_organization_access"] if {
+    input.action == "read"
+    input.resource.type == "user"
+    input.user.id == input.resource.id
+} else = allow_reasons["organization_member_access"] if {
+    input.resource.type == "user_organization"
+    org_id_match
+} 
 
 deny if {
     is_owner_deleting_official_org
@@ -137,6 +165,25 @@ deny if {
     sensitive_actions[input.action]
     not internal_ip_check
     not (is_platform_admin)
+}
+
+deny if {
+    input.action == "invite"
+    input.resource.type == "organization"
+    input.context.targetEmail == input.user.attributes.email
+}
+
+deny if {
+    input.action == "invite"
+    input.resource.type == "organization"
+    input.context.targetUserAlreadyMember == true
+}
+
+
+deny if {
+    input.action == "invite"
+    input.resource.type == "organization"
+    input.context.pendingInvitationsCount > 10
 }
 
 # Règle spécifique: propriétaire ne peut pas supprimer une organisation officielle
@@ -412,7 +459,14 @@ platform_rules = {
         "read": {"PLATFORM_ADMIN": true, "PLATFORM_SUPPORT": true, "PLATFORM_MODERATOR": true, "PLATFORM_COMPLIANCE": true},
         "create": {"PLATFORM_ADMIN": true},
         "update": {"PLATFORM_ADMIN": true, "PLATFORM_SUPPORT": true},
-        "delete": {"PLATFORM_ADMIN": true}
+        "delete": {"PLATFORM_ADMIN": true},
+        "invite": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true},
+        "add_member": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true},
+        "remove_member": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true},
+        "update_member": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true},
+        "manage_invitation": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true},
+        "verify_invitation": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true, "STANDARD_MEMBER": true, "GUEST": true},
+        "list": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true, "STANDARD_MEMBER": true, "TEAM_LEADER": true}
     },
     "User": {
         "read": {"PLATFORM_ADMIN": true, "PLATFORM_SUPPORT": true, "PLATFORM_SECURITY": true},
@@ -514,7 +568,14 @@ org_rules = {
     "Transaction": {
         "read": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true, "FINANCE_MANAGER": true},
         "update": {"ORGANIZATION_OWNER": true, "FINANCE_MANAGER": true}
-    }
+    },
+    "user_organization": {
+    "read": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true, "STANDARD_MEMBER": true, "TEAM_LEADER": true},
+    "create": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true},
+    "update": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true},
+    "delete": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true},
+    "list": {"ORGANIZATION_OWNER": true, "ORGANIZATION_ADMIN": true, "STANDARD_MEMBER": true}
+}
 }
 
 # Matrice des transitions d'état
@@ -641,4 +702,25 @@ decision = {
 } else = {
     "allow": false,
     "reason": "Accès refusé - Aucune règle d'autorisation applicable"
+}
+
+is_allowed if {
+    input.action == "verify_invitation"
+    input.resource.type == "organization"
+    # Pas besoin de vérification d'organisation pour la vérification de token
+}
+
+# Règle spéciale : Lecture de ses propres organisations utilisateur
+is_allowed if {
+    input.action == "read"
+    input.resource.type == "user"
+    input.user.id == input.resource.id
+    # L'utilisateur peut toujours lire ses propres organisations
+}
+
+# Règle spéciale : Accès aux relations user_organization pour ses propres données
+is_allowed if {
+    input.resource.type == "user_organization"
+    input.action in {"read", "list"}
+
 }
