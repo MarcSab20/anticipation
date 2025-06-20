@@ -1,10 +1,19 @@
+// mu-auth/src/authorization/authorization.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { AuthorizationService } from './authorization.service.js';
-import { AuthorizationController } from './authorization.controller.js';
-import { AuthorizationResolver } from './authorization.resolver.js';
-import { PrismaModule } from '../common/prisma/prisma.module.js';
+import { AuthorizationService } from './authorization.service';
+import { AuthorizationController } from './authorization.controller';
+import { AuthorizationResolver } from './authorization.resolver';
+import { PrismaModule } from '../common/prisma/prisma.module';
 
+/**
+ * Module d'autorisation simplifié utilisant smp-auth-ts
+ * 
+ * Fonctionnalités:
+ * - Délégation vers smp-auth-ts pour OPA et Redis
+ * - Intégration Prisma pour journalisation persistante
+ * - Support GraphQL et gRPC
+ */
 @Module({
   imports: [
     ConfigModule,
@@ -17,4 +26,12 @@ import { PrismaModule } from '../common/prisma/prisma.module.js';
   ],
   exports: [AuthorizationService],
 })
-export class AuthorizationModule {}
+export class AuthorizationModule {
+  constructor() {
+    console.log('🛡️ AuthorizationModule initialized with smp-auth-ts integration:');
+    console.log('  ✓ OPA + Redis via smp-auth-ts');
+    console.log('  ✓ Prisma logging integration');
+    console.log('  ✓ GraphQL & gRPC APIs');
+  }
+}
+

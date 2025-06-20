@@ -1,8 +1,13 @@
+// mu-auth/src/authorization/authorization.controller.ts
 import { Controller, Logger } from '@nestjs/common';
 import { GrpcMethod } from '@nestjs/microservices';
-import { AuthorizationService } from './authorization.service.js';
+import { AuthorizationService } from './authorization.service';
 import { OPAInput } from 'smp-auth-ts';
 
+/**
+ * Contrôleur gRPC pour l'autorisation
+ * Simplifié grâce à l'utilisation de smp-auth-ts
+ */
 @Controller()
 export class AuthorizationController {
   private readonly logger = new Logger(AuthorizationController.name);
@@ -14,12 +19,13 @@ export class AuthorizationController {
     this.logger.debug(`gRPC CheckAccess request: ${JSON.stringify(request)}`);
     
     try {
-      // Transformer la requête gRPC en entrée OPA
+      // Transformer la requête gRPC en entrée OPA compatible smp-auth-ts
       const opaInput: OPAInput = {
         user: {
           id: request.userId,
           roles: request.userRoles || [],
-          organization_ids: request.organizationIds,
+          organization_ids: request.organizationIds || [],
+          state: request.userState || 'active',
           attributes: this.parseAttributes(request.userAttributes)
         },
         resource: {
@@ -40,7 +46,7 @@ export class AuthorizationController {
         reason: result.reason || ''
       };
     } catch (error) {
-      this.logger.error(`Error in CheckAccess: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(`Error in CheckAccess: ${error.message}`);
       return {
         allow: false,
         reason: 'Internal error during authorization check'
@@ -51,17 +57,45 @@ export class AuthorizationController {
   @GrpcMethod('AuthorizationService', 'ValidateToken')
   async validateToken(request: { token: string }) {
     try {
-      const userInfo = await this.authService.validateToken(request.token);
-      return {
-        userId: userInfo.sub,
-        email: userInfo.email || '',
-        roles: userInfo.roles || [],
-        attributes: this.flattenAttributes(userInfo.attributes || {}),
-        organizationIds: userInfo.organization_ids || []
-      };
+      // Cette méthode nécessiterait l'injection du service d'authentification
+      // Pour l'instant, déléguer vers le service d'autorisation
+      throw new Error('Token validation should be handled by AuthService');
     } catch (error) {
-      this.logger.error(`Error in ValidateToken: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(`Error in ValidateToken: ${error.message}`);
       throw error;
+    }
+  }
+
+  @GrpcMethod('AuthorizationService', 'GetUserInfo')
+  async getUserInfo(request: { userId: string }) {
+    try {
+      // Cette méthode devrait être déléguée au service d'authentification
+      throw new Error('User info should be handled by AuthService');
+    } catch (error) {
+      this.logger.error(`Error in GetUserInfo: ${error.message}`);
+      throw error;
+    }
+  }
+
+  @GrpcMethod('AuthorizationService', 'GetUserRoles')
+  async getUserRoles(request: { userId: string }) {
+    try {
+      // Cette méthode devrait être déléguée au service d'authentification
+      throw new Error('User roles should be handled by AuthService');
+    } catch (error) {
+      this.logger.error(`Error in GetUserRoles: ${error.message}`);
+      throw error;
+    }
+  }
+
+  @GrpcMethod('AuthorizationService', 'InvalidateUserCache')
+  async invalidateUserCache(request: { userId: string }) {
+    try {
+      await this.authService.invalidateUserCache(request.userId);
+      return { success: true, message: 'Cache invalidated' };
+    } catch (error) {
+      this.logger.error(`Error in InvalidateUserCache: ${error.message}`);
+      return { success: false, message: error.message };
     }
   }
 
@@ -71,8 +105,8 @@ export class AuthorizationController {
       await this.authService.updatePolicy(request.policyId, request.policyContent);
       return { success: true };
     } catch (error) {
-      this.logger.error(`Error in UpdatePolicy: ${error instanceof Error ? error.message : String(error)}`);
-      return { success: false, error: error instanceof Error ? error.message : String(error) };
+      this.logger.error(`Error in UpdatePolicy: ${error.message}`);
+      return { success: false, error: error.message };
     }
   }
 
@@ -82,12 +116,13 @@ export class AuthorizationController {
       const policy = await this.authService.getPolicy(request.policyId);
       return { policy };
     } catch (error) {
-      this.logger.error(`Error in GetPolicy: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(`Error in GetPolicy: ${error.message}`);
       throw error;
     }
   }
 
-  // Méthodes utilitaires
+  // === MÉTHODES UTILITAIRES ===
+
   private parseAttributes(attributes: Record<string, string> = {}): Record<string, any> {
     const result: Record<string, any> = {};
     
@@ -98,24 +133,6 @@ export class AuthorizationController {
       } catch {
         // Si ce n'est pas du JSON, utiliser la valeur telle quelle
         result[key] = value;
-      }
-    }
-    
-    return result;
-  }
-
-  private flattenAttributes(attributes: Record<string, any>): Record<string, string> {
-    const result: Record<string, string> = {};
-    
-    for (const [key, value] of Object.entries(attributes)) {
-      if (value === null || value === undefined) {
-        continue;
-      }
-      
-      if (typeof value === 'object') {
-        result[key] = JSON.stringify(value);
-      } else {
-        result[key] = String(value);
       }
     }
     

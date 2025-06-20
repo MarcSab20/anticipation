@@ -1,6 +1,7 @@
+// mu-auth/src/auth/auth.resolver.ts
 import { Resolver, Query, Mutation, Args, Context } from '@nestjs/graphql';
+import { GraphQLJSONObject } from 'graphql-type-json';
 import { AuthService } from './auth.service';
-import { AuthorizationService } from '../authorization/authorization.service';
 import { LoginResponseDto } from './dto/login-response.dto';
 import { LoginInputDto } from './dto/login-input.dto';
 import { RefreshTokenInputDto } from './dto/refresh-token-input.dto';
@@ -14,10 +15,7 @@ import {
 
 @Resolver()
 export class AuthResolver {
-  constructor(
-    private readonly authService: AuthService,
-    private readonly authorizationService: AuthorizationService
-  ) {}
+  constructor(private readonly authService: AuthService) {}
 
   /**
    * Authentification utilisateur
@@ -32,7 +30,9 @@ export class AuthResolver {
       accessToken: result.access_token,
       refreshToken: result.refresh_token,
       tokenType: result.token_type,
-      expiresIn: result.expires_in
+      expiresIn: result.expires_in,
+      scope: result.scope,
+      sessionId: result.session_id
     };
   }
 
@@ -46,7 +46,8 @@ export class AuthResolver {
       accessToken: result.access_token,
       refreshToken: result.refresh_token,
       tokenType: result.token_type,
-      expiresIn: result.expires_in
+      expiresIn: result.expires_in,
+      scope: result.scope
     };
   }
 
@@ -60,7 +61,8 @@ export class AuthResolver {
       accessToken: result.access_token,
       refreshToken: result.refresh_token,
       tokenType: result.token_type,
-      expiresIn: result.expires_in
+      expiresIn: result.expires_in,
+      scope: result.scope
     };
   }
 
@@ -69,19 +71,19 @@ export class AuthResolver {
    */
   @Query(() => TokenValidationDto)
   async validateToken(@Args('token') token: string): Promise<TokenValidationDto> {
-    try {
-      const result = await this.authService.validateToken(token);
-      return {
-        valid: result.valid,
-        userId: result.userId,
-        email: result.email,
-        givenName: result.givenName,
-        familyName: result.familyName,
-        roles: result.roles
-      };
-    } catch (error) {
-      return { valid: false };
-    }
+    const result = await this.authService.validateToken(token);
+    return {
+      valid: result.valid,
+      userId: result.userId,
+      email: result.email,
+      givenName: result.givenName,
+      familyName: result.familyName,
+      roles: result.roles,
+      expiresAt: result.expiresAt,
+      issuedAt: result.issuedAt,
+      clientId: result.clientId,
+      scope: result.scope
+    };
   }
 
   /**
@@ -89,27 +91,23 @@ export class AuthResolver {
    */
   @Query(() => EnrichedTokenValidationDto)
   async validateTokenEnriched(@Args('token') token: string): Promise<EnrichedTokenValidationDto> {
-    try {
-      const result = await this.authService.validateTokenEnriched(token);
-      
-      let userInfoDto: UserInfoDto | undefined;
-      if (result.userInfo) {
-        userInfoDto = this.mapUserInfoToDto(result.userInfo);
-      }
-
-      return {
-        valid: result.valid,
-        userInfo: userInfoDto,
-        userId: result.userId,
-        email: result.email,
-        givenName: result.givenName,
-        familyName: result.familyName,
-        roles: result.roles,
-        rawKeycloakData: result.rawKeycloakData
-      };
-    } catch (error) {
-      return { valid: false };
+    const result = await this.authService.validateTokenEnriched(token);
+    
+    let userInfoDto: UserInfoDto | undefined;
+    if (result.userInfo) {
+      userInfoDto = this.mapUserInfoToDto(result.userInfo);
     }
+
+    return {
+      valid: result.valid,
+      userInfo: userInfoDto,
+      userId: result.userId,
+      email: result.email,
+      givenName: result.givenName,
+      familyName: result.familyName,
+      roles: result.roles,
+      rawKeycloakData: result.rawKeycloakData
+    };
   }
 
   /**
@@ -117,17 +115,13 @@ export class AuthResolver {
    */
   @Query(() => UserInfoDto, { nullable: true })
   async getUserInfo(@Args('userId') userId: string): Promise<UserInfoDto | null> {
-    try {
-      const userInfo = await this.authService.getUserInfo(userId);
-      
-      if (!userInfo) {
-        return null;
-      }
-
-      return this.mapUserInfoToDto(userInfo);
-    } catch (error) {
+    const userInfo = await this.authService.getUserInfo(userId);
+    
+    if (!userInfo) {
       return null;
     }
+
+    return this.mapUserInfoToDto(userInfo);
   }
 
   /**
@@ -135,11 +129,7 @@ export class AuthResolver {
    */
   @Query(() => [String])
   async getUserRoles(@Args('userId') userId: string): Promise<string[]> {
-    try {
-      return await this.authService.getUserRoles(userId);
-    } catch (error) {
-      return [];
-    }
+    return await this.authService.getUserRoles(userId);
   }
 
   /**
@@ -147,14 +137,7 @@ export class AuthResolver {
    */
   @Query(() => ConnectionTestDto)
   async testRedisConnection(): Promise<ConnectionTestDto> {
-    try {
-      return await this.authService.testRedisConnection();
-    } catch (error) {
-      return {
-        connected: false,
-        error: `Test Redis failed: ${error instanceof Error ? error.message : String(error)}`
-      };
-    }
+    return await this.authService.testRedisConnection();
   }
 
   /**
@@ -162,35 +145,16 @@ export class AuthResolver {
    */
   @Query(() => ConnectionTestDto)
   async testKeycloakConnection(): Promise<ConnectionTestDto> {
-    try {
-      return await this.authService.testKeycloakConnection();
-    } catch (error) {
-      return {
-        connected: false,
-        error: `Test Keycloak failed: ${error instanceof Error ? error.message : String(error)}`
-      };
-    }
+    return await this.authService.testKeycloakConnection();
   }
 
   /**
-   * Tester la connexion Authorization Service (Redis)
+   * Tester la connexion OPA
    */
-  /* @Query(() => ConnectionTestDto)
-  async testAuthorizationRedisConnection(): Promise<ConnectionTestDto> {
-    try {
-      const result = await this.authorizationService.testRedisConnection();
-      return {
-        connected: result.connected,
-        info: result.info,
-        error: result.error
-      };
-    } catch (error) {
-      return {
-        connected: false,
-        error: `Authorization Redis test failed: ${error instanceof Error ? error.message : String(error)}`
-      };
-    }
-  } */
+  @Query(() => ConnectionTestDto)
+  async testOPAConnection(): Promise<ConnectionTestDto> {
+    return await this.authService.testOPAConnection();
+  }
 
   /**
    * Invalider le cache utilisateur
@@ -199,8 +163,6 @@ export class AuthResolver {
   async invalidateUserCache(@Args('userId') userId: string): Promise<boolean> {
     try {
       await this.authService.invalidateUserCache(userId);
-      // Invalider aussi dans le service d'autorisation
-      await this.authorizationService.invalidateUserCache(userId);
       return true;
     } catch (error) {
       return false;
@@ -229,13 +191,9 @@ export class AuthResolver {
     @Args('limit', { nullable: true, defaultValue: 100 }) limit?: number,
     @Args('offset', { nullable: true, defaultValue: 0 }) offset?: number
   ): Promise<AuthenticationLogDto[]> {
-    try {
-      // Cette méthode devrait être implémentée dans le service d'authentification
-      // Pour l'instant, retourner un tableau vide
-      return [];
-    } catch (error) {
-      return [];
-    }
+    // Cette méthode pourrait être implémentée via EventLoggerService
+    // Pour l'instant, retourner un tableau vide
+    return [];
   }
 
   /**
@@ -243,13 +201,9 @@ export class AuthResolver {
    */
   @Query(() => Boolean)
   async isUserOnline(@Args('userId') userId: string): Promise<boolean> {
-    try {
-      // Cette logique devrait vérifier les sessions actives
-      // Pour l'instant, retourner false
-      return false;
-    } catch (error) {
-      return false;
-    }
+    // Cette logique devrait vérifier les sessions actives via smp-auth-ts
+    // Pour l'instant, retourner false
+    return false;
   }
 
   /**
@@ -257,24 +211,28 @@ export class AuthResolver {
    */
   @Query(() => ConnectionTestDto)
   async getAuthenticationStats(): Promise<ConnectionTestDto> {
-    try {
-      // Cette méthode devrait retourner des statistiques d'authentification
-      // Pour l'instant, retourner un objet de base
-      return {
-        connected: true,
-        info: 'Authentication service operational',
-        details: {
-          activeUsers: 0,
-          totalLogins: 0,
-          failedLogins: 0
-        }
-      };
-    } catch (error) {
-      return {
-        connected: false,
-        error: 'Failed to get authentication stats'
-      };
-    }
+    const metrics = this.authService.getMetrics();
+    
+    return {
+      connected: true,
+      info: 'Authentication service operational',
+      details: metrics,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  /**
+   * Vérifier les permissions (délégation vers authorization)
+   */
+  @Query(() => Boolean)
+  async checkPermission(
+    @Args('token') token: string,
+    @Args('resourceId') resourceId: string,
+    @Args('resourceType') resourceType: string,
+    @Args('action') action: string,
+    @Args('context', { nullable: true, type: () => GraphQLJSONObject }) context?: Record<string, any>
+  ): Promise<boolean> {
+    return await this.authService.checkPermission(token, resourceId, resourceType, action, context);
   }
 
   // === MÉTHODES PRIVÉES ===
@@ -286,7 +244,7 @@ export class AuthResolver {
       given_name: userInfo.given_name,
       family_name: userInfo.family_name,
       preferred_username: userInfo.preferred_username,
-      roles: userInfo.roles,
+      roles: userInfo.roles || [],
       organization_ids: userInfo.organization_ids,
       state: userInfo.state,
       attributes: userInfo.attributes ? {
@@ -296,14 +254,10 @@ export class AuthResolver {
         managerId: userInfo.attributes.managerId,
         jobTitle: userInfo.attributes.jobTitle,
         businessUnit: userInfo.attributes.businessUnit,
-        territorialJurisdiction: userInfo.attributes.territorialJurisdiction,
-        technicalExpertise: userInfo.attributes.technicalExpertise,
-        hierarchyLevel: userInfo.attributes.hierarchyLevel,
         workLocation: userInfo.attributes.workLocation,
-        verificationStatus: userInfo.attributes.verificationStatus,
         employmentType: userInfo.attributes.employmentType,
+        verificationStatus: userInfo.attributes.verificationStatus,
         riskScore: userInfo.attributes.riskScore,
-        certifications: userInfo.attributes.certifications,
         firstName: userInfo.attributes.firstName,
         lastName: userInfo.attributes.lastName,
         phoneNumber: userInfo.attributes.phoneNumber,
@@ -313,7 +267,10 @@ export class AuthResolver {
         additionalAttributes: userInfo.attributes
       } : undefined,
       resource_access: userInfo.resource_access,
-      realm_access: userInfo.realm_access
+      realm_access: userInfo.realm_access,
+      created_at: userInfo.created_at,
+      updated_at: userInfo.updated_at,
+      email_verified: userInfo.email_verified
     };
   }
 }

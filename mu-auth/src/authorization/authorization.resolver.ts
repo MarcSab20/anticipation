@@ -1,8 +1,10 @@
+// mu-auth/src/authorization/authorization.resolver.ts
 import { Resolver, Query, Args, Context } from '@nestjs/graphql';
-import { AuthorizationService } from './authorization.service.js';
-import { AuthorizationRequestInput } from './dto/authorization-request.input.js';
-import { AuthorizationResponseDto } from './dto/authorization-response.dto.js';
-import { AuthorizationLogDto } from './dto/authorization-log.dto.js';
+import { AuthorizationService } from './authorization.service';
+import { AuthorizationRequestInput } from './dto/authorization-request.input';
+import { AuthorizationResponseDto } from './dto/authorization-response.dto';
+import { AuthorizationLogDto } from './dto/authorization-log.dto';
+import { OPAInput } from 'smp-auth-ts';
 
 @Resolver()
 export class AuthorizationResolver {
@@ -13,16 +15,60 @@ export class AuthorizationResolver {
     @Args('input') input: AuthorizationRequestInput,
     @Context() context: any
   ): Promise<AuthorizationResponseDto> {
+    // Mapper l'input GraphQL vers le format OPA de smp-auth-ts
+    const opaInput: OPAInput = {
+      user: {
+        id: input.user.id,
+        roles: input.user.roles || [],
+        organization_ids: input.user.organization_ids,
+        state: input.user.state,
+        attributes: {
+          department: input.user.attributes?.department,
+          clearanceLevel: input.user.attributes?.clearanceLevel,
+          contractExpiryDate: input.user.attributes?.contractExpiryDate,
+          managerId: input.user.attributes?.managerId,
+          ...input.user.attributes?.additionalAttributes
+        }
+      },
+      resource: {
+        id: input.resource.id,
+        type: input.resource.type,
+        owner_id: input.resource.owner_id,
+        organization_id: input.resource.organization_id,
+        attributes: {
+          isOfficial: input.resource.attributes?.isOfficial,
+          department: input.resource.attributes?.department,
+          confidential: input.resource.attributes?.confidential,
+          requiredClearance: input.resource.attributes?.requiredClearance,
+          state: input.resource.attributes?.state,
+          ...input.resource.attributes?.additionalAttributes
+        }
+      },
+      action: input.action,
+      context: {
+        ip: input.context?.ip,
+        businessHours: input.context?.businessHours,
+        currentDate: input.context?.currentDate,
+        riskScore: input.context?.riskScore,
+        ...input.context?.additionalContext
+      }
+    };
+
     const authHeader = context.req?.headers?.authorization;
     const token = authHeader ? authHeader.replace('Bearer ', '') : undefined;
     
+    let result;
     if (token) {
-      // Si un token est fourni, l'utiliser pour l'authentification
-      return this.authService.checkAccessWithToken(token, input);
+      result = await this.authService.checkAccessWithToken(token, opaInput);
+    } else {
+      result = await this.authService.checkAccess(opaInput);
     }
     
-    // Sinon, utiliser directement l'entrée OPA
-    return this.authService.checkAccess(input);
+    return {
+      allow: result.allow,
+      reason: result.reason,
+      timestamp: new Date().toISOString()
+    };
   }
 
   @Query(() => [AuthorizationLogDto])
@@ -40,6 +86,7 @@ export class AuthorizationResolver {
     );
     
     return logs.map(log => ({
+      id: log.id || `${log.userId}-${log.timestamp}`,
       userId: log.userId,
       resourceId: log.resourceId,
       resourceType: log.resourceType,
@@ -47,7 +94,12 @@ export class AuthorizationResolver {
       allow: log.allow,
       reason: log.reason,
       context: log.context,
-      timestamp: log.timestamp
+      timestamp: log.timestamp,
+      evaluationTime: log.evaluationTime,
+      correlationId: log.correlationId,
+      sessionId: log.sessionId,
+      ip: log.ip,
+      userAgent: log.userAgent
     }));
   }
 }

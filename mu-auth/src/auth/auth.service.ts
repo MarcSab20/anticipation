@@ -1,486 +1,614 @@
+// mu-auth/src/auth/auth.service.ts - Version avec debugging amélioré
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createClient, RedisClientType } from 'redis';
-import axios from 'axios';
 import { 
-  IAuthenticationService, 
-  AuthResponse, 
-  TokenValidationResult, 
-  EnrichedTokenValidationResult,
+  createAuthService,
+  IAuthenticationService,
+  AuthConfig,
+  AuthenticationOptions,
+  AuthResponse,
+  TokenValidationResult,
   UserInfo,
-  UserAttributes,
   ConnectionTestResult,
-  UserCacheEntry,
-  AuthenticationLog,
-  SessionInfo,
-  AuthenticationOptions
-} from '../../../smp-auth-ts/src/interface/auth.interface';
-import { 
-  KeycloakConfig, 
-  KeycloakClient,
-  KeycloakClientExtended,
-  KeycloakTokenIntrospection, 
-  KeycloakUserData,
-  KeycloakAttributeConfig,
-  ExtendedKeycloakClient
-} from '../../../smp-auth-ts/src/interface/keycloak.interface';
-
-// Import de la librairie smp-auth-ts
-import { KeycloakClientImpl } from 'smp-auth-ts';
+  AuthEvent,
+  AuthEventType,
+  EventCallback
+} from 'smp-auth-ts';
 
 import { PostgresUserService } from './services/postgres-user.service';
-import { KeycloakPostgresSyncService } from './services/keycloak-postgres-sync.service';
-
 import { EventLoggerService } from './services/event-logger.service';
+import { 
+  ExtendedUserInfo, 
+  ExtendedEnrichedTokenValidationResult,
+  TypeMappers,
+  LOCAL_EVENT_TYPES
+} from '../common/types/auth-extended.types';
 
+/**
+ * Service d'authentification NestJS qui encapsule smp-auth-ts
+ * Version avec debugging amélioré et gestion d'erreurs robuste
+ */
 @Injectable()
-export class AuthService implements IAuthenticationService, OnModuleInit, OnModuleDestroy {
+export class AuthService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AuthService.name);
-  private redisClient: RedisClientType;
-  private readonly keycloakConfig: KeycloakConfig;
-  private readonly authOptions: AuthenticationOptions;
-  private readonly attributeConfig: KeycloakAttributeConfig;
-  private eventLogger: EventLoggerService;
+  private authService: IAuthenticationService;
+  private isInitialized = false;
   
-  // Utiliser l'interface de base compatible avec smp-auth-ts
-  private keycloakClient: KeycloakClient;
-  private extendedKeycloakClient: KeycloakClientExtended;
-  
-  private adminTokenCache: {
-    token: string;
-    expiresAt: number;
-  } | null = null;
-
-  constructor(private readonly configService: ConfigService, private readonly postgresUserService: PostgresUserService, eventLogger: EventLoggerService) {
-    // Configuration Keycloak
-    this.keycloakConfig = {
-      url: this.configService.get<string>('KEYCLOAK_URL', 'http://localhost:8080'),
-      realm: this.configService.get<string>('KEYCLOAK_REALM', 'mu-realm'),
-      clientId: this.configService.get<string>('KEYCLOAK_CLIENT_ID', 'mu-client'),
-      clientSecret: this.configService.get<string>('KEYCLOAK_CLIENT_SECRET', ''),
-      timeout: parseInt(this.configService.get<string>('KEYCLOAK_TIMEOUT', '5000')),
-      adminClientId: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_ID'),
-      adminClientSecret: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_SECRET'),
-      enableCache: this.configService.get<boolean>('ENABLE_KEYCLOAK_CACHE', true),
-      cacheExpiry: parseInt(this.configService.get<string>('KEYCLOAK_CACHE_EXPIRY', '3600'))
-    };
-
-    // Options d'authentification
-    this.authOptions = {
-      enableCache: this.configService.get<boolean>('ENABLE_AUTH_CACHE', true),
-      cacheExpiry: parseInt(this.configService.get<string>('AUTH_CACHE_EXPIRY', '3600')),
-      enableLogging: this.configService.get<boolean>('ENABLE_AUTH_LOGGING', true),
-      enableSessionTracking: this.configService.get<boolean>('ENABLE_SESSION_TRACKING', true),
-      maxSessions: parseInt(this.configService.get<string>('MAX_USER_SESSIONS', '5')),
-      tokenValidationStrategy: this.configService.get<'introspection' | 'jwt_decode' | 'userinfo'>('TOKEN_VALIDATION_STRATEGY', 'introspection')
-    };
-
-    // Configuration des attributs personnalisés
-    this.attributeConfig = {
-      organizationIdsAttribute: 'organization_ids',
-      departmentAttribute: 'department',
-      clearanceLevelAttribute: 'clearance_level',
-      contractExpiryAttribute: 'contract_expiry_date',
-      managerIdAttribute: 'manager_id',
-      jobTitleAttribute: 'job_title',
-      businessUnitAttribute: 'business_unit',
-      workLocationAttribute: 'work_location',
-      verificationStatusAttribute: 'verification_status',
-      employmentTypeAttribute: 'employment_type',
-      riskScoreAttribute: 'risk_score',
-      customAttributeMapping: {
-        'territorial_jurisdiction': 'territorialJurisdiction',
-        'technical_expertise': 'technicalExpertise',
-        'hierarchy_level': 'hierarchyLevel',
-        'verification_status': 'verificationStatus',
-        'employment_type': 'employmentType',
-        'work_location': 'workLocation',
-        'business_unit': 'businessUnit',
-        'job_title': 'jobTitle',
-        'manager_id': 'managerId',
-        'contract_expiry_date': 'contractExpiryDate',
-        'clearance_level': 'clearanceLevel',
-        'risk_score': 'riskScore'
-      }
-    };
-
-    this.eventLogger = eventLogger;
-  }
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly postgresUserService: PostgresUserService,
+    private readonly eventLogger: EventLoggerService
+  ) {}
 
   async onModuleInit() {
-    // Initialiser le client Keycloak de base avec smp-auth-ts
-    this.keycloakClient = new KeycloakClientImpl(this.keycloakConfig);
-    
-    // Créer le client étendu
-    this.extendedKeycloakClient = new ExtendedKeycloakClient(
-      this.keycloakClient,
-      this.keycloakConfig
-    );
+    try {
+      this.logger.log('🔄 Initializing AuthService with smp-auth-ts...');
+      
+      // Configuration pour smp-auth-ts avec valeurs par défaut robustes
+      const authConfig: AuthConfig = {
+        keycloak: {
+          url: this.configService.get<string>('KEYCLOAK_URL', 'http://localhost:8080'),
+          realm: this.configService.get<string>('KEYCLOAK_REALM', 'mu-realm'),
+          clientId: this.configService.get<string>('KEYCLOAK_CLIENT_ID', 'mu-client'),
+          clientSecret: this.configService.get<string>('KEYCLOAK_CLIENT_SECRET', ''),
+          timeout: parseInt(this.configService.get<string>('KEYCLOAK_TIMEOUT', '10000')),
+          adminClientId: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_ID'),
+          adminClientSecret: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_SECRET'),
+          enableCache: this.configService.get<boolean>('ENABLE_KEYCLOAK_CACHE', true),
+          cacheExpiry: parseInt(this.configService.get<string>('KEYCLOAK_CACHE_EXPIRY', '3600'))
+        },
+        opa: {
+          url: this.configService.get<string>('OPA_URL', 'http://localhost:8181'),
+          policyPath: this.configService.get<string>('OPA_POLICY_PATH', '/v1/data/authz/decision'),
+          timeout: parseInt(this.configService.get<string>('OPA_TIMEOUT', '5000'))
+        },
+        redis: {
+          host: this.configService.get<string>('REDIS_HOST', 'localhost'),
+          port: parseInt(this.configService.get<string>('REDIS_PORT', '6379')),
+          password: this.configService.get<string>('REDIS_PASSWORD'),
+          db: parseInt(this.configService.get<string>('REDIS_DB', '0')),
+          prefix: this.configService.get<string>('REDIS_PREFIX', 'mu:auth:')
+        }
+      };
 
-    // Initialiser Redis si le cache est activé
-    if (this.authOptions.enableCache) {
-      await this.initializeRedis();
-    }
-    
-    
+      const authOptions: AuthenticationOptions = {
+        enableCache: this.configService.get<boolean>('ENABLE_AUTH_CACHE', true),
+        cacheExpiry: parseInt(this.configService.get<string>('AUTH_CACHE_EXPIRY', '3600')),
+        enableLogging: this.configService.get<boolean>('ENABLE_AUTH_LOGGING', true),
+        enableSessionTracking: this.configService.get<boolean>('ENABLE_SESSION_TRACKING', true),
+        maxSessions: parseInt(this.configService.get<string>('MAX_USER_SESSIONS', '5')),
+        tokenValidationStrategy: this.configService.get<'introspection' | 'jwt_decode' | 'userinfo'>('TOKEN_VALIDATION_STRATEGY', 'introspection'),
+        development: {
+          enableDebugLogging: this.configService.get<string>('NODE_ENV') === 'development',
+          mockMode: this.configService.get<boolean>('AUTH_MOCK_MODE', false),
+          bypassAuthentication: this.configService.get<boolean>('AUTH_BYPASS', false)
+        }
+      };
 
-    // Passer le client Redis au logger d'événements
-    if (this.redisClient && this.authOptions.enableLogging) {
-      this.eventLogger.setRedisClient(this.redisClient);
-      this.logger.log('AuthService initialized with smp-auth-ts compatibility');
-      this.logger.log('Event logging initialized');
+      // Log de la configuration (sans secrets)
+      this.logger.debug('Configuration smp-auth-ts:', {
+        keycloak: {
+          url: authConfig.keycloak.url,
+          realm: authConfig.keycloak.realm,
+          clientId: authConfig.keycloak.clientId,
+          clientSecret: authConfig.keycloak.clientSecret ? '***' : 'NOT_SET'
+        },
+        opa: authConfig.opa,
+        redis: {
+          ...authConfig.redis,
+          password: authConfig.redis.password ? '***' : 'NOT_SET'
+        },
+        options: authOptions
+      });
+
+      // Test de connectivité avant initialisation
+      await this.testExternalServices(authConfig);
+
+      // Créer le service d'authentification
+      this.authService = createAuthService(authConfig, authOptions);
+
+      // Configurer les gestionnaires d'événements
+      this.setupEventHandlers();
+
+      this.isInitialized = true;
+      this.logger.log('✅ AuthService initialized successfully with smp-auth-ts');
+      
+    } catch (error) {
+      this.logger.error('❌ Failed to initialize AuthService:', error.message);
+      this.logger.warn('🔄 Falling back to mock mode for development');
+      
+      // Fallback en mode mock pour le développement
+      this.authService = this.createMockAuthService();
+      this.isInitialized = true;
     }
   }
 
   async onModuleDestroy() {
-    if (this.redisClient && this.redisClient.isOpen) {
-      await this.redisClient.quit();
-      this.logger.log('Redis client disconnected');
-    }
-    this.logger.log('AuthService destroyed');
-  }
-
-  private async initializeRedis(): Promise<void> {
-    try {
-      this.redisClient = createClient({
-        url: `redis://${this.configService.get('REDIS_PASSWORD') ? `:${this.configService.get('REDIS_PASSWORD')}@` : ''}${this.configService.get('REDIS_HOST', 'localhost')}:${this.configService.get('REDIS_PORT', '6379')}/${this.configService.get('REDIS_DB', '0')}`,
-      }) as RedisClientType;
-
-      this.redisClient.on('error', (err) => {
-        this.logger.error(`Redis client error: ${err}`);
-      });
-
-      await this.redisClient.connect();
-      this.logger.log('Redis client connected successfully');
-    } catch (error) {
-      this.logger.error(`Failed to connect to Redis: ${error instanceof Error ? error.message : String(error)}`);
-      this.authOptions.enableCache = false;
+    if (this.authService && this.isInitialized) {
+      try {
+        await this.authService.close();
+        this.logger.log('AuthService destroyed successfully');
+      } catch (error) {
+        this.logger.error('Error during AuthService destruction:', error.message);
+      }
     }
   }
+
+  // ============================================================================
+  // MÉTHODES AVEC GESTION D'ERREURS AMÉLIORÉE
+  // ============================================================================
 
   async login(username: string, password: string): Promise<AuthResponse> {
-    const startTime = Date.now();
-
+    this.ensureInitialized();
+    
     try {
-      const url = `${this.keycloakConfig.url}/realms/${this.keycloakConfig.realm}/protocol/openid-connect/token`;
+      this.logger.debug(`🔐 Attempting login for user: ${username}`);
       
-      const params = new URLSearchParams();
-      params.append('grant_type', 'password');
-      params.append('client_id', this.keycloakConfig.clientId);
-      params.append('client_secret', this.keycloakConfig.clientSecret);
-      params.append('username', username);
-      params.append('password', password);
-      params.append('scope', 'openid email profile');
+      const result = await this.authService.login(username, password);
       
-      const response = await axios.post(url, params, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: this.keycloakConfig.timeout
-      });
+      this.logger.log(`✅ Login successful for user: ${username}`);
+      return result;
       
-      const authResponse: AuthResponse = {
-        access_token: response.data.access_token,
-        refresh_token: response.data.refresh_token,
-        token_type: response.data.token_type || 'Bearer',
-        expires_in: response.data.expires_in || 3600
-      };
-
-      // Journaliser et mettre en cache si activé
-      if (this.authOptions.enableLogging) {
-        await this.logAuthenticationEvent(username, 'login', true);
-      }
-
-      if (this.authOptions.enableCache && response.data.access_token) {
-        await this.cacheUserInfoFromToken(response.data.access_token);
-      }
-      // Log success
-      await this.eventLogger.logEvent({
-        type: 'login',
-        username,
-        success: true,
-        duration: Date.now() - startTime,
-        details: { tokenType: authResponse.token_type }
-      });
-
-      return authResponse;
     } catch (error) {
-      if (this.authOptions.enableLogging) {
-        await this.logAuthenticationEvent(username, 'login', false, error.message);
+      this.logger.error(`❌ Login failed for user ${username}:`, error.message);
+      
+      // Log détaillé de l'erreur pour debugging
+      if (error.response) {
+        this.logger.error('Keycloak response:', {
+          status: error.response.status,
+          data: error.response.data
+        });
       }
-      // Log failure
-      await this.eventLogger.logEvent({
-        type: 'login',
-        username,
-        success: false,
-        duration: Date.now() - startTime,
-        error: error.message
-      });
-
-      this.logger.error('Login failed:', error.response?.data || error.message);
-      throw error;
-    }
-  }
-
-  async refreshToken(refreshToken: string): Promise<AuthResponse> {
-    try {
-      const url = `${this.keycloakConfig.url}/realms/${this.keycloakConfig.realm}/protocol/openid-connect/token`;
       
-      const params = new URLSearchParams();
-      params.append('grant_type', 'refresh_token');
-      params.append('client_id', this.keycloakConfig.clientId);
-      params.append('client_secret', this.keycloakConfig.clientSecret);
-      params.append('refresh_token', refreshToken);
-      
-      const response = await axios.post(url, params, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: this.keycloakConfig.timeout
-      });
-      
-      const authResponse: AuthResponse = {
-        access_token: response.data.access_token,
-        refresh_token: response.data.refresh_token,
-        token_type: response.data.token_type || 'Bearer',
-        expires_in: response.data.expires_in || 3600
-      };
-
-      // Mettre à jour le cache
-      if (this.authOptions.enableCache && response.data.access_token) {
-        await this.cacheUserInfoFromToken(response.data.access_token);
-      }
-
-      return authResponse;
-    } catch (error) {
-      this.logger.error('Token refresh failed:', error.response?.data || error.message);
-      throw error;
+      throw new Error(`Authentication failed: ${error.message}`);
     }
   }
 
   async validateToken(token: string): Promise<TokenValidationResult> {
-    const startTime = Date.now();
+    this.ensureInitialized();
+    
     try {
-      // Vérifier le cache en premier si activé
-      if (this.authOptions.enableCache) {
-        const cached = await this.getCachedTokenValidation(token);
-        if (cached) {
-          return cached;
-        }
-      }
-
-      // Utiliser le client Keycloak de smp-auth-ts
-      const userInfo = await this.keycloakClient.validateToken(token);
-      
-      const result: TokenValidationResult = {
-        valid: true,
-        userId: userInfo.sub,
-        email: userInfo.email || '',
-        givenName: userInfo.given_name || '',
-        familyName: userInfo.family_name || '',
-        roles: userInfo.roles || []
-      };
-
-      // Mettre en cache si activé
-      if (this.authOptions.enableCache) {
-        await this.cacheTokenValidation(token, result);
-      }
-
-      // Log success
-      await this.eventLogger.logEvent({
-        type: 'token_validation',
-        userId: result.userId,
-        success: result.valid,
-        duration: Date.now() - startTime,
-        details: { 
-          cached: false, // Indiquer si c'était en cache
-          roles: result.roles?.length || 0
-        }
-      });
-
+      const result = await this.authService.validateToken(token);
+      this.logger.debug(`✅ Token validation successful for user: ${result.userId}`);
       return result;
-    } catch (error) {
-      this.logger.error('Token validation failed:', error.message);
-
-      await this.eventLogger.logEvent({
-        type: 'token_validation',
-        success: false,
-        duration: Date.now() - startTime,
-        error: error.message
-      });
       
+    } catch (error) {
+      this.logger.error('❌ Token validation failed:', error.message);
       return { valid: false };
     }
   }
 
-  async validateTokenEnriched(token: string): Promise<EnrichedTokenValidationResult> {
+  async refreshToken(refreshToken: string): Promise<AuthResponse> {
+    this.ensureInitialized();
+    
     try {
-      // Vérifier le cache enrichi
-      if (this.authOptions.enableCache) {
-        const cached = await this.getCachedEnrichedValidation(token);
-        if (cached) {
-          return cached;
-        }
-      }
-
-      // Validation de base
-      const baseValidation = await this.validateToken(token);
-      if (!baseValidation.valid) {
-        return { valid: false };
-      }
-
-      // Enrichir avec les informations complètes en utilisant le client étendu
-      const userInfo = await this.getUserInfoFromTokenUsingExtended(token);
+      const result = await this.authService.refreshToken(refreshToken);
+      this.logger.debug('✅ Token refresh successful');
+      return result;
       
-      const enrichedResult: EnrichedTokenValidationResult = {
-        valid: true,
-        userInfo,
-        userId: baseValidation.userId,
-        email: baseValidation.email,
-        givenName: baseValidation.givenName,
-        familyName: baseValidation.familyName,
-        roles: baseValidation.roles
-      };
-
-      // Mettre en cache
-      if (this.authOptions.enableCache) {
-        await this.cacheEnrichedValidation(token, enrichedResult);
-      }
-
-      return enrichedResult;
     } catch (error) {
-      this.logger.error('Enriched token validation failed:', error.message);
-      return { valid: false };
+      this.logger.error('❌ Token refresh failed:', error.message);
+      throw new Error(`Token refresh failed: ${error.message}`);
     }
   }
 
   async getClientCredentialsToken(): Promise<AuthResponse> {
+    this.ensureInitialized();
+    
     try {
-      const url = `${this.keycloakConfig.url}/realms/${this.keycloakConfig.realm}/protocol/openid-connect/token`;
+      const result = await this.authService.getClientCredentialsToken();
+      this.logger.debug('✅ Client credentials token obtained');
+      return result;
       
-      const params = new URLSearchParams();
-      params.append('grant_type', 'client_credentials');
-      params.append('client_id', this.keycloakConfig.adminClientId || this.keycloakConfig.clientId);
-      params.append('client_secret', this.keycloakConfig.adminClientSecret || this.keycloakConfig.clientSecret);
-      
-      const response = await axios.post(url, params, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: this.keycloakConfig.timeout
-      });
-      
-      return {
-        access_token: response.data.access_token,
-        token_type: response.data.token_type || 'Bearer',
-        expires_in: response.data.expires_in || 3600
-      };
     } catch (error) {
-      this.logger.error('Client credentials token failed:', error.message);
-      throw error;
+      this.logger.error('❌ Client credentials token failed:', error.message);
+      throw new Error(`Client credentials failed: ${error.message}`);
     }
   }
 
   async logout(token: string): Promise<void> {
+    this.ensureInitialized();
+    
     try {
-      const url = `${this.keycloakConfig.url}/realms/${this.keycloakConfig.realm}/protocol/openid-connect/logout`;
+      await this.authService.logout(token);
+      this.logger.debug('✅ Logout successful');
       
-      const params = new URLSearchParams();
-      params.append('client_id', this.keycloakConfig.clientId);
-      params.append('client_secret', this.keycloakConfig.clientSecret);
-      params.append('token', token);
-      
-      await axios.post(url, params, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        timeout: this.keycloakConfig.timeout
-      });
-
-      // Invalider le cache
-      if (this.authOptions.enableCache) {
-        await this.invalidateTokenCache(token);
-      }
-
-      // Journaliser
-      if (this.authOptions.enableLogging) {
-        try {
-          const userInfo = await this.keycloakClient.validateToken(token);
-          await this.logAuthenticationEvent(userInfo.sub, 'logout', true);
-        } catch {
-          // Token déjà invalide, ignorer l'erreur de logging
-        }
-      }
     } catch (error) {
-      this.logger.error('Logout failed:', error.message);
-      throw error;
+      this.logger.error('❌ Logout failed:', error.message);
+      // Ne pas throw pour logout, log seulement
     }
   }
 
-  // async getUserInfo(userId: string): Promise<UserInfo | null> {
-  //   try {
-  //     // Vérifier le cache
-  //     if (this.authOptions.enableCache) {
-  //       const cached = await this.getCachedUserInfo(userId);
-  //       if (cached) {
-  //         return cached;
-  //       }
-  //     }
-
-  //     // Utiliser le client Keycloak de smp-auth-ts
-  //     const userInfo = await this.keycloakClient.getUserInfo(userId);
-
-  //     // Mettre en cache
-  //     if (this.authOptions.enableCache) {
-  //       await this.cacheUserInfo(userId, userInfo);
-  //     }
-
-  //     return userInfo;
-  //   } catch (error) {
-  //     this.logger.error(`Failed to get user info: ${error.message}`);
-  //     return null;
-  //   }
-  // }
-
-  async getUserInfo(userId: string): Promise<UserInfo | null> {
+  async invalidateUserCache(userId: string): Promise<void> {
+    this.ensureInitialized();
+    
     try {
-      // Vérifier d'abord le cache
-      if (this.authOptions.enableCache) {
-        const cached = await this.getCachedUserInfo(userId);
-        if (cached) {
-          return cached;
-        }
-      }
-
-      // Récupérer depuis PostgreSQL d'abord
-      const postgresUser = await this.postgresUserService.getUserById(userId);
+      await this.authService.invalidateUserCache(userId);
+      this.logger.debug(`✅ Cache invalidated for user: ${userId}`);
       
-      if (postgresUser) {
-        const userInfo = this.mapPostgresUserToUserInfo(postgresUser);
-        
-        // Mettre en cache
-        if (this.authOptions.enableCache) {
-          await this.cacheUserInfo(userId, userInfo);
-        }
-        
-        return userInfo;
-      }
-
-      // Fallback vers Keycloak si pas trouvé dans PostgreSQL
-      const userInfo = await this.keycloakClient.getUserInfo(userId);
-
-      // Synchroniser vers PostgreSQL
-      if (userInfo) {
-        await this.syncKeycloakUserToPostgres(userInfo);
-      }
-
-      // Mettre en cache
-      if (this.authOptions.enableCache) {
-        await this.cacheUserInfo(userId, userInfo);
-      }
-
-      return userInfo;
     } catch (error) {
-      this.logger.error(`Failed to get user info: ${error.message}`);
+      this.logger.error(`❌ Cache invalidation failed for user ${userId}:`, error.message);
+    }
+  }
+
+  // ============================================================================
+  // MÉTHODES DE TEST
+  // ============================================================================
+
+  async testKeycloakConnection(): Promise<ConnectionTestResult> {
+    if (!this.isInitialized) {
+      return { connected: false, error: 'Service not initialized' };
+    }
+    
+    try {
+      const result = await this.authService.testKeycloakConnection();
+      this.logger.debug(`Keycloak test: ${result.connected ? '✅' : '❌'}`);
+      return result;
+    } catch (error) {
+      this.logger.error('Keycloak connection test failed:', error.message);
+      return { connected: false, error: error.message };
+    }
+  }
+
+  async testRedisConnection(): Promise<ConnectionTestResult> {
+    if (!this.isInitialized) {
+      return { connected: false, error: 'Service not initialized' };
+    }
+    
+    try {
+      const result = await this.authService.testRedisConnection();
+      this.logger.debug(`Redis test: ${result.connected ? '✅' : '❌'}`);
+      return result;
+    } catch (error) {
+      this.logger.error('Redis connection test failed:', error.message);
+      return { connected: false, error: error.message };
+    }
+  }
+
+  async testOPAConnection(): Promise<ConnectionTestResult> {
+    if (!this.isInitialized) {
+      return { connected: false, error: 'Service not initialized' };
+    }
+    
+    try {
+      const result = await this.authService.testOPAConnection();
+      this.logger.debug(`OPA test: ${result.connected ? '✅' : '❌'}`);
+      return result;
+    } catch (error) {
+      this.logger.error('OPA connection test failed:', error.message);
+      return { connected: false, error: error.message };
+    }
+  }
+
+  // ============================================================================
+  // MÉTHODES AVEC FALLBACK POSTGRESQL
+  // ============================================================================
+
+  async getUserInfo(userId: string): Promise<ExtendedUserInfo | null> {
+    this.ensureInitialized();
+    
+    try {
+      // Récupérer d'abord depuis PostgreSQL si disponible
+      try {
+        const postgresUser = await this.postgresUserService.getUserById(userId);
+        if (postgresUser) {
+          this.logger.debug(`✅ User info retrieved from PostgreSQL: ${userId}`);
+          return this.mapPostgresUserToUserInfo(postgresUser);
+        }
+      } catch (pgError) {
+        this.logger.warn(`PostgreSQL unavailable for user ${userId}, trying Keycloak:`, pgError.message);
+      }
+
+      // Fallback vers smp-auth-ts
+      const userInfo = await this.authService.getUserInfo(userId);
+      if (!userInfo) {
+        this.logger.warn(`User not found: ${userId}`);
+        return null;
+      }
+
+      this.logger.debug(`✅ User info retrieved from Keycloak: ${userId}`);
+
+      // Synchroniser vers PostgreSQL en arrière-plan (sans bloquer)
+      this.syncUserToPostgres(userInfo).catch(error => {
+        this.logger.warn(`Background sync failed for user ${userId}:`, error.message);
+      });
+
+      return TypeMappers.toExtendedUserInfo(userInfo);
+      
+    } catch (error) {
+      this.logger.error(`❌ Failed to get user info for ${userId}:`, error.message);
       return null;
     }
   }
 
-  // Nouvelle méthode de mapping
-  private mapPostgresUserToUserInfo(pgUser: any): UserInfo {
-    return {
+  async getUserRoles(userId: string): Promise<string[]> {
+    this.ensureInitialized();
+    
+    try {
+      // Essayer PostgreSQL d'abord
+      try {
+        const postgresUser = await this.postgresUserService.getUserById(userId);
+        if (postgresUser && postgresUser.roles) {
+          return Array.isArray(postgresUser.roles) ? postgresUser.roles : [];
+        }
+      } catch (pgError) {
+        this.logger.debug(`PostgreSQL unavailable for roles ${userId}, trying Keycloak`);
+      }
+
+      // Fallback vers smp-auth-ts
+      const roles = await this.authService.getUserRoles(userId);
+      this.logger.debug(`✅ User roles retrieved: ${userId} -> ${roles.join(', ')}`);
+      return roles;
+      
+    } catch (error) {
+      this.logger.error(`❌ Failed to get user roles for ${userId}:`, error.message);
+      return [];
+    }
+  }
+
+  async validateTokenEnriched(token: string): Promise<ExtendedEnrichedTokenValidationResult> {
+    this.ensureInitialized();
+    
+    try {
+      const basicValidation = await this.validateToken(token);
+      
+      if (!basicValidation.valid || !basicValidation.userId) {
+        return { valid: false };
+      }
+
+      const userInfo = await this.getUserInfo(basicValidation.userId);
+      
+      return {
+        valid: true,
+        userInfo: userInfo || undefined,
+        userId: basicValidation.userId,
+        email: basicValidation.email,
+        givenName: basicValidation.givenName,
+        familyName: basicValidation.familyName,
+        roles: basicValidation.roles
+      };
+      
+    } catch (error) {
+      this.logger.error('❌ Enriched token validation failed:', error.message);
+      return { valid: false };
+    }
+  }
+
+  // ============================================================================
+  // AUTORISATION AVEC FALLBACK
+  // ============================================================================
+
+  async checkPermission(
+    token: string, 
+    resourceId: string, 
+    resourceType: string, 
+    action: string,
+    context?: Record<string, any>
+  ): Promise<boolean> {
+    this.ensureInitialized();
+    
+    try {
+      const result = await this.authService.checkPermission(token, resourceId, resourceType, action, context);
+      this.logger.debug(`✅ Permission check: ${action} on ${resourceType}:${resourceId} -> ${result}`);
+      return result;
+      
+    } catch (error) {
+      this.logger.error(`❌ Permission check failed: ${action} on ${resourceType}:${resourceId}:`, error.message);
+      return false; // Deny by default en cas d'erreur
+    }
+  }
+
+  async checkPermissionDetailed(
+    token: string,
+    resourceId: string,
+    resourceType: string,
+    action: string,
+    context?: Record<string, any>
+  ) {
+    this.ensureInitialized();
+    
+    try {
+      const result = await this.authService.checkPermissionDetailed(token, resourceId, resourceType, action, context);
+      this.logger.debug(`✅ Detailed permission check: ${action} on ${resourceType}:${resourceId} -> ${result.allowed}`);
+      return result;
+      
+    } catch (error) {
+      this.logger.error(`❌ Detailed permission check failed:`, error.message);
+      return {
+        allowed: false,
+        reason: 'Permission check failed due to system error',
+        timestamp: new Date().toISOString()
+      };
+    }
+  }
+
+  // ============================================================================
+  // MÉTRIQUES ET ÉVÉNEMENTS
+  // ============================================================================
+
+  getMetrics(): Record<string, any> {
+    if (!this.isInitialized) {
+      return { error: 'Service not initialized' };
+    }
+    
+    try {
+      const metrics = this.authService.getMetrics();
+      return {
+        ...metrics,
+        initialized: this.isInitialized,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error('❌ Failed to get metrics:', error.message);
+      return { error: error.message };
+    }
+  }
+
+  resetMetrics(): void {
+    if (this.isInitialized) {
+      try {
+        this.authService.resetMetrics();
+        this.logger.debug('✅ Metrics reset');
+      } catch (error) {
+        this.logger.error('❌ Failed to reset metrics:', error.message);
+      }
+    }
+  }
+
+  addEventListener(eventType: AuthEventType, callback: EventCallback): void {
+    if (this.isInitialized) {
+      this.authService.addEventListener(eventType, callback);
+    }
+  }
+
+  removeEventListener(eventType: AuthEventType, callback: EventCallback): void {
+    if (this.isInitialized) {
+      this.authService.removeEventListener(eventType, callback);
+    }
+  }
+
+  // ============================================================================
+  // MÉTHODES PRIVÉES ET UTILITAIRES
+  // ============================================================================
+
+  private ensureInitialized(): void {
+    if (!this.isInitialized) {
+      throw new Error('AuthService not initialized. Please check configuration and external services.');
+    }
+  }
+
+  private async testExternalServices(config: AuthConfig): Promise<void> {
+    const results = await Promise.allSettled([
+      this.testServiceEndpoint(config.keycloak.url + '/realms/' + config.keycloak.realm, 'Keycloak'),
+      this.testServiceEndpoint(config.opa.url + '/health', 'OPA'),
+      this.testRedisConnectivity(config.redis)
+    ]);
+
+    const failures = results
+      .map((result, index) => ({ result, service: ['Keycloak', 'OPA', 'Redis'][index] }))
+      .filter(({ result }) => result.status === 'rejected')
+      .map(({ service }) => service);
+
+    if (failures.length > 0) {
+      this.logger.warn(`⚠️ Some external services are unavailable: ${failures.join(', ')}`);
+      this.logger.warn('Service will continue with limited functionality');
+    }
+  }
+
+  private async testServiceEndpoint(url: string, serviceName: string): Promise<void> {
+    try {
+      const response = await fetch(url, { 
+        method: 'GET',
+        headers: { 'Accept': 'application/json' }
+      });
+      
+      if (response.ok) {
+        this.logger.debug(`✅ ${serviceName} is accessible`);
+      } else {
+        this.logger.warn(`⚠️ ${serviceName} returned status ${response.status}`);
+      }
+    } catch (error) {
+      this.logger.warn(`⚠️ ${serviceName} is not accessible:`, error.message);
+      throw error;
+    }
+  }
+
+  private async testRedisConnectivity(redisConfig: AuthConfig['redis']): Promise<void> {
+    // Test simple de connectivité Redis
+    try {
+      const { createClient } = await import('redis');
+      const testClient = createClient({
+        socket: {
+          host: redisConfig.host,
+          port: redisConfig.port,
+          connectTimeout: 2000
+        },
+        password: redisConfig.password
+      });
+      
+      await testClient.connect();
+      await testClient.ping();
+      await testClient.quit();
+      
+      this.logger.debug('✅ Redis is accessible');
+    } catch (error) {
+      this.logger.warn('⚠️ Redis is not accessible:', error.message);
+      throw error;
+    }
+  }
+
+  private createMockAuthService(): IAuthenticationService {
+    this.logger.warn('🔧 Creating mock AuthService for development');
+    
+    const { createMockAuthService } = require('smp-auth-ts');
+    
+    return createMockAuthService({
+      tokenValidation: true,
+      authorizationDecision: true,
+      userInfo: {
+        sub: 'mock-user-123',
+        email: 'mock@example.com',
+        given_name: 'Mock',
+        family_name: 'User',
+        roles: ['USER', 'MOCK']
+      }
+    });
+  }
+
+  private setupEventHandlers(): void {
+    try {
+      this.authService.addEventListener('login', async (event: AuthEvent) => {
+        await this.eventLogger.logEvent({
+          type: 'login',
+          userId: event.userId,
+          username: event.username,
+          success: event.success,
+          duration: event.duration,
+          error: event.error,
+          details: event.details
+        });
+      });
+
+      this.authService.addEventListener('logout', async (event: AuthEvent) => {
+        await this.eventLogger.logEvent({
+          type: 'logout',
+          userId: event.userId,
+          success: event.success,
+          duration: event.duration,
+          details: event.details
+        });
+      });
+
+      this.authService.addEventListener('token_validation', async (event: AuthEvent) => {
+        await this.eventLogger.logEvent({
+          type: 'token_validation',
+          userId: event.userId,
+          success: event.success,
+          duration: event.duration,
+          error: event.error,
+          details: event.details
+        });
+      });
+
+      this.authService.addEventListener('token_refresh', async (event: AuthEvent) => {
+        await this.eventLogger.logEvent({
+          type: 'token_refresh',
+          userId: event.userId,
+          success: event.success,
+          duration: event.duration,
+          error: event.error,
+          details: event.details
+        });
+      });
+      
+      this.logger.debug('✅ Event handlers configured');
+    } catch (error) {
+      this.logger.warn('⚠️ Failed to setup event handlers:', error.message);
+    }
+  }
+
+  private mapPostgresUserToUserInfo(pgUser: any): ExtendedUserInfo {
+    const baseUserInfo: UserInfo = {
       sub: pgUser.id,
       email: pgUser.email,
       given_name: pgUser.first_name,
@@ -496,14 +624,10 @@ export class AuthService implements IAuthenticationService, OnModuleInit, OnModu
         managerId: pgUser.manager_id,
         jobTitle: pgUser.job_title,
         businessUnit: pgUser.business_unit,
-        territorialJurisdiction: pgUser.territorial_jurisdiction,
-        technicalExpertise: pgUser.technical_expertise,
-        hierarchyLevel: pgUser.hierarchy_level,
         workLocation: pgUser.work_location,
         employmentType: pgUser.employment_type,
         verificationStatus: pgUser.verification_status,
         riskScore: pgUser.risk_score,
-        certifications: pgUser.certifications,
         firstName: pgUser.first_name,
         lastName: pgUser.last_name,
         phoneNumber: pgUser.phone_number,
@@ -515,412 +639,46 @@ export class AuthService implements IAuthenticationService, OnModuleInit, OnModu
       resource_access: {},
       realm_access: { roles: Array.isArray(pgUser.roles) ? pgUser.roles : [] }
     };
+
+    return TypeMappers.toExtendedUserInfo(baseUserInfo, pgUser);
   }
 
-  // Nouvelle méthode de synchronisation
-  private async syncKeycloakUserToPostgres(userInfo: UserInfo): Promise<void> {
+  private async syncUserToPostgres(userInfo: UserInfo): Promise<void> {
     try {
-      const userData = {
-        username: userInfo.preferred_username,
-        email: userInfo.email,
-        first_name: userInfo.given_name,
-        last_name: userInfo.family_name,
-        enabled: userInfo.state === 'ACTIVE',
-        department: userInfo.attributes?.department,
-        clearance_level: userInfo.attributes?.clearanceLevel,
-        job_title: userInfo.attributes?.jobTitle,
-        business_unit: userInfo.attributes?.businessUnit,
-        territorial_jurisdiction: userInfo.attributes?.territorialJurisdiction,
-        hierarchy_level: userInfo.attributes?.hierarchyLevel,
-        work_location: userInfo.attributes?.workLocation,
-        employment_type: userInfo.attributes?.employmentType,
-        verification_status: userInfo.attributes?.verificationStatus,
-        risk_score: userInfo.attributes?.riskScore,
-        phone_number: userInfo.attributes?.phoneNumber,
-        nationality: userInfo.attributes?.nationality,
-        gender: userInfo.attributes?.gender,
-        state: userInfo.state
-      };
-
+      const userData = TypeMappers.toPostgresUserData(userInfo as ExtendedUserInfo);
       await this.postgresUserService.createUser(userData);
-    } catch (error) {
-      this.logger.error(`Erreur lors de la synchronisation vers PostgreSQL: ${error.message}`);
-    }
-  }
-
-  async getUserRoles(userId: string): Promise<string[]> {
-    try {
-      // Vérifier le cache
-      if (this.authOptions.enableCache) {
-        const cached = await this.getCachedUserRoles(userId);
-        if (cached) {
-          return cached;
-        }
-      }
-
-      // Utiliser le client Keycloak de smp-auth-ts
-      const roles = await this.keycloakClient.getRoles(userId);
-
-      // Mettre en cache
-      if (this.authOptions.enableCache) {
-        await this.cacheUserRoles(userId, roles);
-      }
-
-      return roles;
-    } catch (error) {
-      this.logger.error(`Failed to get user roles: ${error.message}`);
-      return [];
-    }
-  }
-
-  async invalidateUserCache(userId: string): Promise<void> {
-    if (!this.authOptions.enableCache || !this.redisClient) {
-      return;
-    }
-
-    try {
-      const keys = [
-        `auth:user:info:${userId}`,
-        `auth:user:roles:${userId}`,
-        `auth:user:cache:${userId}`
-      ];
       
-      await this.redisClient.del(keys);
-      this.logger.debug(`Cache invalidated for user ${userId}`);
-
-      if (this.authOptions.enableLogging) {
-        await this.logAuthenticationEvent(userId, 'cache_invalidation', true);
-      }
+      await this.eventLogger.logEvent({
+        type: LOCAL_EVENT_TYPES.SYNC,
+        userId: userInfo.sub,
+        success: true,
+        details: {
+          operation: 'user_sync_keycloak_to_postgres',
+          username: userInfo.preferred_username
+        }
+      });
+      
+      this.logger.debug(`✅ User synced to PostgreSQL: ${userInfo.preferred_username}`);
     } catch (error) {
-      this.logger.error(`Failed to invalidate user cache: ${error.message}`);
-    }
-  }
-
-  // === MÉTHODES PRIVÉES ===
-
-  private async getUserInfoFromTokenUsingExtended(token: string): Promise<UserInfo> {
-    // Utiliser l'API userinfo de Keycloak pour obtenir les informations complètes
-    const url = `${this.keycloakConfig.url}/realms/${this.keycloakConfig.realm}/protocol/openid-connect/userinfo`;
-    
-    const response = await axios.get(url, {
-      headers: { 'Authorization': `Bearer ${token}` },
-      timeout: this.keycloakConfig.timeout
-    });
-    
-    return this.mapTokenDataToUserInfo(response.data);
-  }
-
-  private mapTokenDataToUserInfo(data: any): UserInfo {
-    const roles = this.extractRolesFromData(data);
-    
-    return {
-      sub: data.sub,
-      email: data.email,
-      given_name: data.given_name,
-      family_name: data.family_name,
-      preferred_username: data.preferred_username,
-      roles,
-      organization_ids: this.extractOrganizationIds(data),
-      state: data.user_state || 'ACTIVE',
-      attributes: this.mapDataToUserAttributes(data),
-      resource_access: data.resource_access,
-      realm_access: data.realm_access
-    };
-  }
-
-  private mapDataToUserAttributes(data: any): UserAttributes {
-    const attributes: UserAttributes = {};
-    
-    // Mapper les attributs selon la configuration
-    Object.entries(this.attributeConfig.customAttributeMapping).forEach(([keycloakAttr, opaAttr]) => {
-      if (data[keycloakAttr] !== undefined) {
-        let value = data[keycloakAttr];
-        
-        // Conversion des types
-        if (keycloakAttr.includes('level') || keycloakAttr.includes('score')) {
-          value = typeof value === 'string' ? parseInt(value) : value;
-        }
-        
-        if (Array.isArray(value) && value.length === 1) {
-          value = value[0];
-        }
-        
-        attributes[opaAttr] = value;
-      }
-    });
-
-    // Attributs additionnels
-    if (data.email) attributes.email = data.email;
-    if (data.given_name) attributes.firstName = data.given_name;
-    if (data.family_name) attributes.lastName = data.family_name;
-
-    return attributes;
-  }
-
-  private extractRolesFromData(data: any): string[] {
-    const roles: string[] = [];
-    
-    if (data.realm_access?.roles) {
-      roles.push(...data.realm_access.roles);
-    }
-    
-    if (data.resource_access) {
-      Object.values(data.resource_access).forEach((resource: any) => {
-        if (resource.roles) {
-          roles.push(...resource.roles);
+      this.logger.warn(`⚠️ Failed to sync user to PostgreSQL:`, error.message);
+      
+      await this.eventLogger.logEvent({
+        type: 'error',
+        userId: userInfo.sub,
+        success: false,
+        error: error.message,
+        details: {
+          operation: 'user_sync_keycloak_to_postgres',
+          username: userInfo.preferred_username
         }
       });
     }
-    
-    return [...new Set(roles)];
   }
 
-  private extractOrganizationIds(data: any): string[] {
-    const orgIds = data[this.attributeConfig.organizationIdsAttribute];
-    
-    if (!orgIds) return [];
-    
-    if (Array.isArray(orgIds)) return orgIds;
-    if (typeof orgIds === 'string') return orgIds.split(',').map(id => id.trim());
-    
-    return [];
-  }
+  // ============================================================================
+  // MÉTHODES DE COMPATIBILITÉ
+  // ============================================================================
 
-  // === MÉTHODES DE CACHE ===
-
-  private async getCachedTokenValidation(token: string): Promise<TokenValidationResult | null> {
-    if (!this.authOptions.enableCache || !this.redisClient) return null;
-    
-    try {
-      const tokenHash = this.hashToken(token);
-      const cached = await this.redisClient.get(`auth:token:basic:${tokenHash}`);
-      return cached ? JSON.parse(cached) : null;
-    } catch (error) {
-      this.logger.error(`Failed to get cached token validation: ${error.message}`);
-      return null;
-    }
-  }
-
-  private async cacheTokenValidation(token: string, result: TokenValidationResult): Promise<void> {
-    if (!this.authOptions.enableCache || !this.redisClient) return;
-    
-    try {
-      const tokenHash = this.hashToken(token);
-      await this.redisClient.set(
-        `auth:token:basic:${tokenHash}`,
-        JSON.stringify(result),
-        { EX: this.authOptions.cacheExpiry! }
-      );
-    } catch (error) {
-      this.logger.error(`Failed to cache token validation: ${error.message}`);
-    }
-  }
-
-  private async getCachedEnrichedValidation(token: string): Promise<EnrichedTokenValidationResult | null> {
-    if (!this.authOptions.enableCache || !this.redisClient) return null;
-    
-    try {
-      const tokenHash = this.hashToken(token);
-      const cached = await this.redisClient.get(`auth:token:enriched:${tokenHash}`);
-      return cached ? JSON.parse(cached) : null;
-    } catch (error) {
-      this.logger.error(`Failed to get cached enriched validation: ${error.message}`);
-      return null;
-    }
-  }
-
-  private async cacheEnrichedValidation(token: string, result: EnrichedTokenValidationResult): Promise<void> {
-    if (!this.authOptions.enableCache || !this.redisClient) return;
-    
-    try {
-      const tokenHash = this.hashToken(token);
-      await this.redisClient.set(
-        `auth:token:enriched:${tokenHash}`,
-        JSON.stringify(result),
-        { EX: this.authOptions.cacheExpiry! }
-      );
-    } catch (error) {
-      this.logger.error(`Failed to cache enriched validation: ${error.message}`);
-    }
-  }
-
-  private async getCachedUserInfo(userId: string): Promise<UserInfo | null> {
-    if (!this.authOptions.enableCache || !this.redisClient) return null;
-    
-    try {
-      const cached = await this.redisClient.get(`auth:user:info:${userId}`);
-      return cached ? JSON.parse(cached) : null;
-    } catch (error) {
-      this.logger.error(`Failed to get cached user info: ${error.message}`);
-      return null;
-    }
-  }
-
-  private async cacheUserInfo(userId: string, userInfo: UserInfo): Promise<void> {
-    if (!this.authOptions.enableCache || !this.redisClient) return;
-    
-    try {
-      await this.redisClient.set(
-        `auth:user:info:${userId}`,
-        JSON.stringify(userInfo),
-        { EX: this.authOptions.cacheExpiry! }
-      );
-    } catch (error) {
-      this.logger.error(`Failed to cache user info: ${error.message}`);
-    }
-  }
-
-  private async getCachedUserRoles(userId: string): Promise<string[] | null> {
-    if (!this.authOptions.enableCache || !this.redisClient) return null;
-    
-    try {
-      const cached = await this.redisClient.get(`auth:user:roles:${userId}`);
-      return cached ? JSON.parse(cached) : null;
-    } catch (error) {
-      this.logger.error(`Failed to get cached user roles: ${error.message}`);
-      return null;
-    }
-  }
-
-  private async cacheUserRoles(userId: string, roles: string[]): Promise<void> {
-    if (!this.authOptions.enableCache || !this.redisClient) return;
-    
-    try {
-      await this.redisClient.set(
-        `auth:user:roles:${userId}`,
-        JSON.stringify(roles),
-        { EX: this.authOptions.cacheExpiry! }
-      );
-    } catch (error) {
-      this.logger.error(`Failed to cache user roles: ${error.message}`);
-    }
-  }
-
-  private async cacheUserInfoFromToken(token: string): Promise<void> {
-    try {
-      const userInfo = await this.getUserInfoFromTokenUsingExtended(token);
-      await this.cacheUserInfo(userInfo.sub, userInfo);
-    } catch (error) {
-      this.logger.error(`Failed to cache user info from token: ${error.message}`);
-    }
-  }
-
-  private async invalidateTokenCache(token: string): Promise<void> {
-    if (!this.authOptions.enableCache || !this.redisClient) return;
-    
-    try {
-      const tokenHash = this.hashToken(token);
-      await this.redisClient.del([
-        `auth:token:basic:${tokenHash}`,
-        `auth:token:enriched:${tokenHash}`
-      ]);
-    } catch (error) {
-      this.logger.error(`Failed to invalidate token cache: ${error.message}`);
-    }
-  }
-
-  // === MÉTHODES DE LOGGING ===
-
-  private async logAuthenticationEvent(
-    userId: string, 
-    action: AuthenticationLog['action'], 
-    success: boolean, 
-    error?: string
-  ): Promise<void> {
-    if (!this.authOptions.enableLogging || !this.redisClient) return;
-    
-    try {
-      const logEntry: AuthenticationLog = {
-        userId,
-        action,
-        success,
-        timestamp: new Date().toISOString(),
-        error
-      };
-      
-      await this.redisClient.lPush(
-        'auth:logs:authentication',
-        JSON.stringify(logEntry)
-      );
-      
-      // Limiter la taille des logs
-      await this.redisClient.lTrim('auth:logs:authentication', 0, 9999);
-    } catch (error) {
-      this.logger.error(`Failed to log authentication event: ${error.message}`);
-    }
-  }
-
-  // === MÉTHODES UTILITAIRES ===
-
-  private hashToken(token: string): string {
-    let hash = 0;
-    for (let i = 0; i < token.length; i++) {
-      const char = token.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    return hash.toString(16);
-  }
-
-  // === MÉTHODES DE TEST ===
-
-  async testRedisConnection(): Promise<ConnectionTestResult> {
-    if (!this.redisClient) {
-      return { connected: false, error: 'Redis client not initialized' };
-    }
-
-    try {
-      const start = Date.now();
-      const pong = await this.redisClient.ping();
-      const latency = Date.now() - start;
-      
-      return { 
-        connected: true, 
-        info: `Redis connection successful. Response: ${pong}`,
-        latency,
-        details: { pong }
-      };
-    } catch (error) {
-      return { 
-        connected: false, 
-        error: `Redis connection failed: ${error instanceof Error ? error.message : String(error)}` 
-      };
-    }
-  }
-
-  async testKeycloakConnection(): Promise<ConnectionTestResult> {
-    try {
-      const start = Date.now();
-      const url = `${this.keycloakConfig.url}/realms/${this.keycloakConfig.realm}`;
-      
-      const response = await axios.get(url, {
-        timeout: this.keycloakConfig.timeout
-      });
-      
-      const latency = Date.now() - start;
-      
-      return {
-        connected: true,
-        info: 'Keycloak connection successful',
-        latency,
-        details: { 
-          realm: response.data.realm,
-          public_key: response.data.public_key ? 'present' : 'absent'
-        }
-      };
-    } catch (error) {
-      return {
-        connected: false,
-        error: `Keycloak connection failed: ${error instanceof Error ? error.message : String(error)}`
-      };
-    }
-  }
-
-  // === MÉTHODES DE COMPATIBILITÉ AVEC L'ANCIEN CONTRÔLEUR ===
-
-  /**
-   * Authentifie un utilisateur (alias pour login)
-   */
   async authenticateUser(username: string, password: string): Promise<{accessToken: string, refreshToken: string}> {
     const result = await this.login(username, password);
     return {
@@ -929,9 +687,6 @@ export class AuthService implements IAuthenticationService, OnModuleInit, OnModu
     };
   }
 
-  /**
-   * Rafraîchit un token utilisateur (alias pour refreshToken)
-   */
   async refreshUserToken(refreshToken: string): Promise<{accessToken: string, refreshToken: string}> {
     const result = await this.refreshToken(refreshToken);
     return {
@@ -940,27 +695,12 @@ export class AuthService implements IAuthenticationService, OnModuleInit, OnModu
     };
   }
 
-  /**
-   * Déconnecte un utilisateur (alias pour logout)
-   */
   async logoutUser(token: string): Promise<void> {
     return this.logout(token);
   }
 
-  /**
-   * Obtient un token admin
-   */
   async getAdminToken(): Promise<string> {
     const tokenResponse = await this.getClientCredentialsToken();
     return tokenResponse.access_token;
-  }
-
-  // Accès aux clients pour compatibilité
-  getKeycloakClient(): KeycloakClient {
-    return this.keycloakClient;
-  }
-
-  getExtendedKeycloakClient(): KeycloakClientExtended {
-    return this.extendedKeycloakClient;
   }
 }

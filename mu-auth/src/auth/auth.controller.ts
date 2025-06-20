@@ -1,14 +1,20 @@
+// mu-auth/src/auth/auth.controller.ts
 import { Controller, Post, Body, Get, Headers, Logger, HttpException, HttpStatus, Param, Query } from '@nestjs/common';
-import { AuthService } from '../auth/auth.service.js';
-
-// Dans auth.controller.ts
+import { AuthService } from './auth.service';
 import { EventLoggerService } from './services/event-logger.service';
 
+/**
+ * Contrôleur REST pour l'authentification
+ * Simplifié grâce à l'utilisation de smp-auth-ts
+ */
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
 
-  constructor(private readonly authService: AuthService, private readonly eventLogger: EventLoggerService) {}
+  constructor(
+    private readonly authService: AuthService, 
+    private readonly eventLogger: EventLoggerService
+  ) {}
 
   /**
    * Authentification utilisateur
@@ -16,14 +22,17 @@ export class AuthController {
   @Post('login')
   async login(@Body() body: { username: string; password: string }) {
     try {
-      const { accessToken, refreshToken } = await this.authService.authenticateUser(body.username, body.password);
+      const result = await this.authService.login(body.username, body.password);
       
       return {
         success: true,
         data: {
-          accessToken,
-          refreshToken,
-          tokenType: 'Bearer'
+          accessToken: result.access_token,
+          refreshToken: result.refresh_token,
+          tokenType: result.token_type,
+          expiresIn: result.expires_in,
+          scope: result.scope,
+          sessionId: result.session_id
         }
       };
     } catch (error) {
@@ -45,14 +54,15 @@ export class AuthController {
   @Post('refresh')
   async refreshToken(@Body() body: { refresh_token: string }) {
     try {
-      const { accessToken, refreshToken } = await this.authService.refreshUserToken(body.refresh_token);
+      const result = await this.authService.refreshToken(body.refresh_token);
       
       return {
         success: true,
         data: {
-          accessToken,
-          refreshToken,
-          tokenType: 'Bearer'
+          accessToken: result.access_token,
+          refreshToken: result.refresh_token,
+          tokenType: result.token_type,
+          expiresIn: result.expires_in
         }
       };
     } catch (error) {
@@ -79,7 +89,7 @@ export class AuthController {
       }
 
       const token = authHeader.substring(7);
-      await this.authService.logoutUser(token);
+      await this.authService.logout(token);
       
       return {
         success: true,
@@ -146,9 +156,9 @@ export class AuthController {
    * Informations utilisateur
    */
   @Get('user/:userId')
-  async getUserInfo(@Body() body: { userId: string }) {
+  async getUserInfo(@Param('userId') userId: string) {
     try {
-      const userInfo = await this.authService.getUserInfo(body.userId);
+      const userInfo = await this.authService.getUserInfo(userId);
       
       if (!userInfo) {
         throw new HttpException('User not found', HttpStatus.NOT_FOUND);
@@ -159,7 +169,7 @@ export class AuthController {
         data: userInfo
       };
     } catch (error) {
-      this.logger.error(`Failed to get user info for ${body.userId}:`, error.message);
+      this.logger.error(`Failed to get user info for ${userId}:`, error.message);
       throw new HttpException(
         { 
           success: false, 
@@ -175,16 +185,16 @@ export class AuthController {
    * Rôles utilisateur
    */
   @Get('user/:userId/roles')
-  async getUserRoles(@Body() body: { userId: string }) {
+  async getUserRoles(@Param('userId') userId: string) {
     try {
-      const roles = await this.authService.getUserRoles(body.userId);
+      const roles = await this.authService.getUserRoles(userId);
       
       return {
         success: true,
         data: { roles }
       };
     } catch (error) {
-      this.logger.error(`Failed to get user roles for ${body.userId}:`, error.message);
+      this.logger.error(`Failed to get user roles for ${userId}:`, error.message);
       throw new HttpException(
         { 
           success: false, 
@@ -202,13 +212,14 @@ export class AuthController {
   @Post('admin-token')
   async getAdminToken() {
     try {
-      const token = await this.authService.getAdminToken();
+      const result = await this.authService.getClientCredentialsToken();
       
       return {
         success: true,
         data: {
-          accessToken: token,
-          tokenType: 'Bearer'
+          accessToken: result.access_token,
+          tokenType: result.token_type,
+          expiresIn: result.expires_in
         }
       };
     } catch (error) {
@@ -250,78 +261,86 @@ export class AuthController {
   }
 
   /**
-   * Test de connexion Redis
+   * Vérification de permissions
    */
-  @Get('test/redis')
-  async testRedisConnection() {
+  @Post('check-permission')
+  async checkPermission(
+    @Headers('authorization') authHeader: string,
+    @Body() body: { 
+      resourceId: string; 
+      resourceType: string; 
+      action: string; 
+      context?: Record<string, any> 
+    }
+  ) {
     try {
-      const result = await this.authService.testRedisConnection();
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        throw new HttpException('Token required', HttpStatus.BAD_REQUEST);
+      }
+
+      const token = authHeader.substring(7);
+      const allowed = await this.authService.checkPermission(
+        token, 
+        body.resourceId, 
+        body.resourceType, 
+        body.action, 
+        body.context
+      );
       
       return {
         success: true,
-        data: result
+        data: { allowed }
       };
     } catch (error) {
-      this.logger.error('Redis connection test failed:', error.message);
-      return {
-        success: false,
-        data: { connected: false },
-        error: error.message
-      };
+      this.logger.error('Permission check failed:', error.message);
+      throw new HttpException(
+        { 
+          success: false, 
+          message: 'Permission check failed',
+          error: error.message 
+        }, 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
 
   /**
-   * Test de connexion Keycloak
-   */
-  @Get('test/keycloak')
-  async testKeycloakConnection() {
-    try {
-      const result = await this.authService.testKeycloakConnection();
-      
-      return {
-        success: true,
-        data: result
-      };
-    } catch (error) {
-      this.logger.error('Keycloak connection test failed:', error.message);
-      return {
-        success: false,
-        data: { connected: false },
-        error: error.message
-      };
-    }
-  }
-
-  /**
-   * Health check général
+   * Health check
    */
   @Get('health')
   async healthCheck() {
     try {
-      const [redisTest, keycloakTest] = await Promise.all([
+      const [keycloakTest, redisTest, opaTest] = await Promise.allSettled([
+        this.authService.testKeycloakConnection(),
         this.authService.testRedisConnection(),
-        this.authService.testKeycloakConnection()
+        this.authService.testOPAConnection()
       ]);
 
-      const allHealthy = redisTest.connected && keycloakTest.connected;
+      const keycloak = keycloakTest.status === 'fulfilled' && keycloakTest.value.connected;
+      const redis = redisTest.status === 'fulfilled' && redisTest.value.connected;
+      const opa = opaTest.status === 'fulfilled' && opaTest.value.connected;
+      
+      const allHealthy = keycloak && redis && opa;
 
       return {
         success: true,
         status: allHealthy ? 'healthy' : 'degraded',
         timestamp: new Date().toISOString(),
         services: {
-          redis: {
-            status: redisTest.connected ? 'up' : 'down',
-            latency: redisTest.latency,
-            error: redisTest.error
-          },
           keycloak: {
-            status: keycloakTest.connected ? 'up' : 'down',
-            latency: keycloakTest.latency,
-            error: keycloakTest.error
+            status: keycloak ? 'up' : 'down',
+            details: keycloakTest.status === 'fulfilled' ? keycloakTest.value : undefined
+          },
+          redis: {
+            status: redis ? 'up' : 'down',
+            details: redisTest.status === 'fulfilled' ? redisTest.value : undefined
+          },
+          opa: {
+            status: opa ? 'up' : 'down',
+            details: opaTest.status === 'fulfilled' ? opaTest.value : undefined
           }
-        }
+        },
+        metrics: this.authService.getMetrics()
       };
     } catch (error) {
       this.logger.error('Health check failed:', error.message);
@@ -331,6 +350,32 @@ export class AuthController {
         timestamp: new Date().toISOString(),
         error: error.message
       };
+    }
+  }
+
+  /**
+   * Métriques du service
+   */
+  @Get('metrics')
+  async getMetrics() {
+    try {
+      const metrics = this.authService.getMetrics();
+      
+      return {
+        success: true,
+        data: metrics,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      this.logger.error('Failed to get metrics:', error.message);
+      throw new HttpException(
+        { 
+          success: false, 
+          message: 'Failed to get metrics',
+          error: error.message 
+        }, 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
   }
 
@@ -356,79 +401,5 @@ export class AuthController {
       }, HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
-
-  /**
-   * Événements par type
-   */
-  @Get('events/type/:type')
-  async getEventsByType(
-    @Param('type') type: string,
-    @Query('limit') limit?: string
-  ) {
-    try {
-      const events = await this.eventLogger.getEventsByType(
-        type,
-        limit ? parseInt(limit) : 50
-      );
-      
-      return {
-        success: true,
-        data: events,
-        count: events.length
-      };
-    } catch (error) {
-      throw new HttpException({
-        success: false,
-        error: error.message
-      }, HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
-
-  /**
-   * Événements par utilisateur
-   */
-  @Get('events/user/:userId')
-  async getEventsByUser(
-    @Param('userId') userId: string,
-    @Query('limit') limit?: string
-  ) {
-    try {
-      const events = await this.eventLogger.getEventsByUser(
-        userId,
-        limit ? parseInt(limit) : 50
-      );
-      
-      return {
-        success: true,
-        data: events,
-        count: events.length
-      };
-    } catch (error) {
-      throw new HttpException({
-        success: false,
-        error: error.message
-      }, HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
-
-  /**
-   * Statistiques quotidiennes
-   */
-  @Get('events/stats')
-  async getStats(@Query('date') date?: string) {
-    try {
-      const stats = await this.eventLogger.getStats(date);
-      
-      return {
-        success: true,
-        date: date || new Date().toISOString().split('T')[0],
-        data: stats
-      };
-    } catch (error) {
-      throw new HttpException({
-        success: false,
-        error: error.message
-      }, HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
 }
+

@@ -1,10 +1,13 @@
+// mu-auth/src/auth/services/event-logger.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RedisClientType } from 'redis';
+import { AuthEventType } from 'smp-auth-ts';
 
+// Interface locale pour les événements, étendue à partir de smp-auth-ts
 export interface AuthEvent {
   id: string;
-  type: 'login' | 'logout' | 'token_validation' | 'token_refresh' | 'sync' | 'user_creation' | 'role_assignment' | 'error';
+  type: AuthEventType | 'sync' | 'user_creation' | 'role_assignment'; // Types étendus localement
   userId?: string;
   username?: string;
   success: boolean;
@@ -16,18 +19,18 @@ export interface AuthEvent {
   duration?: number;
 }
 
-// Interface pour les événements en entrée
+// Interface pour les événements en entrée - compatible avec smp-auth-ts
 export interface AuthEventInput {
-    type: AuthEvent['type'];
-    userId?: string;
-    username?: string;
-    success?: boolean;
-    ip?: string;
-    userAgent?: string;
-    details?: Record<string, any>;
-    error?: string;
-    duration?: number;
-  }
+  type: AuthEventType | 'sync' | 'user_creation' | 'role_assignment';
+  userId?: string;
+  username?: string;
+  success?: boolean;
+  ip?: string;
+  userAgent?: string;
+  details?: Record<string, any>;
+  error?: string;
+  duration?: number;
+}
 
 @Injectable()
 export class EventLoggerService {
@@ -47,20 +50,19 @@ export class EventLoggerService {
     }
 
     try {
-        const fullEvent: AuthEvent = {
-          id: this.generateEventId(),
-          timestamp: new Date().toISOString(),
-          success: eventInput.success ?? true,
-          type: eventInput.type as AuthEvent['type'],             
-          userId: eventInput.userId,
-          username: eventInput.username,
-          ip: eventInput.ip,
-          userAgent: eventInput.userAgent,
-          details: eventInput.details,
-          error: eventInput.error,
-          duration: eventInput.duration
-        };
-  
+      const fullEvent: AuthEvent = {
+        id: this.generateEventId(),
+        timestamp: new Date().toISOString(),
+        success: eventInput.success ?? true,
+        type: eventInput.type as AuthEvent['type'],
+        userId: eventInput.userId,
+        username: eventInput.username,
+        ip: eventInput.ip,
+        userAgent: eventInput.userAgent,
+        details: eventInput.details,
+        error: eventInput.error,
+        duration: eventInput.duration
+      };
 
       // Stocker l'événement avec TTL (7 jours par défaut)
       const eventKey = `auth:events:${fullEvent.id}`;
@@ -183,6 +185,29 @@ export class EventLoggerService {
       this.logger.error(`Failed to get stats: ${error.message}`);
       return {};
     }
+  }
+
+  /**
+   * Log d'événements spécifiques à l'application (non couverts par smp-auth-ts)
+   */
+  async logSyncEvent(type: 'sync' | 'user_creation' | 'role_assignment', details: Record<string, any>): Promise<void> {
+    await this.logEvent({
+      type,
+      success: true,
+      details
+    });
+  }
+
+  async logErrorEvent(error: Error, context?: Record<string, any>): Promise<void> {
+    await this.logEvent({
+      type: 'error',
+      success: false,
+      error: error.message,
+      details: {
+        stack: error.stack,
+        ...context
+      }
+    });
   }
 
   private generateEventId(): string {

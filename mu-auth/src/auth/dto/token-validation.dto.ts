@@ -1,3 +1,4 @@
+// mu-auth/src/auth/dto/token-validation.dto.ts
 import { Field, ObjectType } from '@nestjs/graphql';
 import { GraphQLJSONObject } from 'graphql-type-json';
 
@@ -20,6 +21,18 @@ export class TokenValidationDto {
 
   @Field(() => [String], { nullable: true, description: "Rôles de l'utilisateur" })
   roles?: string[];
+
+  @Field(() => String, { nullable: true, description: "Date d'expiration" })
+  expiresAt?: string;
+
+  @Field(() => String, { nullable: true, description: "Date d'émission" })
+  issuedAt?: string;
+
+  @Field(() => String, { nullable: true, description: "ID client" })
+  clientId?: string;
+
+  @Field(() => [String], { nullable: true, description: "Portées" })
+  scope?: string[];
 }
 
 @ObjectType()
@@ -42,29 +55,17 @@ export class UserAttributesDto {
   @Field(() => String, { nullable: true, description: "Unité d'affaires" })
   businessUnit?: string;
 
-  @Field(() => String, { nullable: true, description: "Juridiction territoriale" })
-  territorialJurisdiction?: string;
-
-  @Field(() => String, { nullable: true, description: "Expertise technique" })
-  technicalExpertise?: string;
-
-  @Field(() => Number, { nullable: true, description: "Niveau hiérarchique" })
-  hierarchyLevel?: number;
-
   @Field(() => String, { nullable: true, description: "Lieu de travail" })
   workLocation?: string;
-
-  @Field(() => String, { nullable: true, description: "Statut de vérification" })
-  verificationStatus?: string;
 
   @Field(() => String, { nullable: true, description: "Type d'emploi" })
   employmentType?: string;
 
+  @Field(() => String, { nullable: true, description: "Statut de vérification" })
+  verificationStatus?: string;
+
   @Field(() => Number, { nullable: true, description: "Score de risque" })
   riskScore?: number;
-
-  @Field(() => [String], { nullable: true, description: "Certifications" })
-  certifications?: string[];
 
   @Field(() => String, { nullable: true, description: "Prénom" })
   firstName?: string;
@@ -122,6 +123,15 @@ export class UserInfoDto {
 
   @Field(() => GraphQLJSONObject, { nullable: true, description: "Accès au realm" })
   realm_access?: { roles: string[] };
+
+  @Field(() => String, { nullable: true, description: "Date de création" })
+  created_at?: string;
+
+  @Field(() => String, { nullable: true, description: "Date de mise à jour" })
+  updated_at?: string;
+
+  @Field(() => Boolean, { nullable: true, description: "Email vérifié" })
+  email_verified?: boolean;
 }
 
 @ObjectType()
@@ -167,6 +177,12 @@ export class ConnectionTestDto {
 
   @Field(() => GraphQLJSONObject, { nullable: true, description: "Détails supplémentaires" })
   details?: Record<string, any>;
+
+  @Field(() => String, { nullable: true, description: "Timestamp" })
+  timestamp?: string;
+
+  @Field(() => String, { nullable: true, description: "Version du service" })
+  version?: string;
 }
 
 @ObjectType()
@@ -194,4 +210,10 @@ export class AuthenticationLogDto {
 
   @Field(() => GraphQLJSONObject, { nullable: true, description: "Détails supplémentaires" })
   details?: Record<string, any>;
+
+  @Field(() => Number, { nullable: true, description: "Durée de l'opération" })
+  duration?: number;
+
+  @Field(() => String, { nullable: true, description: "Nom d'utilisateur" })
+  username?: string;
 }

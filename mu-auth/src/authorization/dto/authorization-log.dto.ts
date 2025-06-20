@@ -3,6 +3,9 @@ import { GraphQLJSONObject } from 'graphql-type-json';
 
 @ObjectType()
 export class AuthorizationLogDto {
+  @Field(() => ID, { description: "Identifiant du log" })
+  id: string;
+
   @Field(() => ID, { description: "Identifiant de l'utilisateur" })
   userId: string;
   
@@ -26,4 +29,19 @@ export class AuthorizationLogDto {
   
   @Field(() => String, { description: "Timestamp de la décision" })
   timestamp: string;
+
+  @Field(() => Number, { nullable: true, description: "Temps d'évaluation en ms" })
+  evaluationTime?: number;
+
+  @Field(() => String, { nullable: true, description: "ID de corrélation" })
+  correlationId?: string;
+
+  @Field(() => String, { nullable: true, description: "ID de session" })
+  sessionId?: string;
+
+  @Field(() => String, { nullable: true, description: "Adresse IP" })
+  ip?: string;
+
+  @Field(() => String, { nullable: true, description: "User Agent" })
+  userAgent?: string;
 }

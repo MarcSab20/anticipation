@@ -8,9 +8,24 @@ type AuthorizationResponseDto {
 
   """Raison de la décision"""
   reason: String
+
+  """Timestamp de la décision"""
+  timestamp: String
+
+  """Temps d'évaluation en ms"""
+  evaluationTime: Float
+
+  """Résultat mis en cache"""
+  cached: Boolean
+
+  """ID de corrélation"""
+  correlationId: String
 }
 
 type AuthorizationLogDto {
+  """Identifiant du log"""
+  id: ID!
+
   """Identifiant de l'utilisateur"""
   userId: ID!
 
@@ -34,6 +49,21 @@ type AuthorizationLogDto {
 
   """Timestamp de la décision"""
   timestamp: String!
+
+  """Temps d'évaluation en ms"""
+  evaluationTime: Float
+
+  """ID de corrélation"""
+  correlationId: String
+
+  """ID de session"""
+  sessionId: String
+
+  """Adresse IP"""
+  ip: String
+
+  """User Agent"""
+  userAgent: String
 }
 
 """
@@ -79,6 +109,18 @@ type TokenValidationDto {
 
   """Rôles de l'utilisateur"""
   roles: [String!]
+
+  """Date d'expiration"""
+  expiresAt: String
+
+  """Date d'émission"""
+  issuedAt: String
+
+  """ID client"""
+  clientId: String
+
+  """Portées"""
+  scope: [String!]
 }
 
 type UserAttributesDto {
@@ -100,29 +142,17 @@ type UserAttributesDto {
   """Unité d'affaires"""
   businessUnit: String
 
-  """Juridiction territoriale"""
-  territorialJurisdiction: String
-
-  """Expertise technique"""
-  technicalExpertise: String
-
-  """Niveau hiérarchique"""
-  hierarchyLevel: Float
-
   """Lieu de travail"""
   workLocation: String
-
-  """Statut de vérification"""
-  verificationStatus: String
 
   """Type d'emploi"""
   employmentType: String
 
+  """Statut de vérification"""
+  verificationStatus: String
+
   """Score de risque"""
   riskScore: Float
-
-  """Certifications"""
-  certifications: [String!]
 
   """Prénom"""
   firstName: String
@@ -179,6 +209,15 @@ type UserInfoDto {
 
   """Accès au realm"""
   realm_access: JSONObject
+
+  """Date de création"""
+  created_at: String
+
+  """Date de mise à jour"""
+  updated_at: String
+
+  """Email vérifié"""
+  email_verified: Boolean
 }
 
 type EnrichedTokenValidationDto {
@@ -222,6 +261,12 @@ type ConnectionTestDto {
 
   """Détails supplémentaires"""
   details: JSONObject
+
+  """Timestamp"""
+  timestamp: String
+
+  """Version du service"""
+  version: String
 }
 
 type AuthenticationLogDto {
@@ -248,6 +293,12 @@ type AuthenticationLogDto {
 
   """Détails supplémentaires"""
   details: JSONObject
+
+  """Durée de l'opération"""
+  duration: Float
+
+  """Nom d'utilisateur"""
+  username: String
 }
 
 type Query {
@@ -259,9 +310,11 @@ type Query {
   getUserRoles(userId: String!): [String!]!
   testRedisConnection: ConnectionTestDto!
   testKeycloakConnection: ConnectionTestDto!
+  testOPAConnection: ConnectionTestDto!
   getAuthenticationHistory(userId: String, limit: Float = 100, offset: Float = 0): [AuthenticationLogDto!]!
   isUserOnline(userId: String!): Boolean!
   getAuthenticationStats: ConnectionTestDto!
+  checkPermission(token: String!, resourceId: String!, resourceType: String!, action: String!, context: JSONObject): Boolean!
 }
 
 input AuthorizationRequestInput {
