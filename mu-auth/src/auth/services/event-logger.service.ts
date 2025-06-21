@@ -1,5 +1,5 @@
 // mu-auth/src/auth/services/event-logger.service.ts
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RedisClientType } from 'redis';
 import { AuthEventType } from 'smp-auth-ts';
@@ -7,7 +7,7 @@ import { AuthEventType } from 'smp-auth-ts';
 // Interface locale pour les événements, étendue à partir de smp-auth-ts
 export interface AuthEvent {
   id: string;
-  type: AuthEventType | 'sync' | 'user_creation' | 'role_assignment'; // Types étendus localement
+  type: AuthEventType | 'sync' | 'user_creation' | 'role_assignment';
   userId?: string;
   username?: string;
   success: boolean;
@@ -33,11 +33,49 @@ export interface AuthEventInput {
 }
 
 @Injectable()
-export class EventLoggerService {
+export class EventLoggerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(EventLoggerService.name);
-  private redisClient: RedisClientType;
+  private redisClient: RedisClientType | null = null;
 
   constructor(private readonly configService: ConfigService) {}
+
+  async onModuleInit() {
+    try {
+      const { createClient } = await import('redis');
+      this.redisClient = createClient({
+        socket: {
+          host: this.configService.get('REDIS_HOST', 'localhost'),
+          port: this.configService.get('REDIS_PORT', 6379),
+        },
+        password: this.configService.get('REDIS_PASSWORD') || undefined,
+        database: this.configService.get('REDIS_DB', 0),
+      }) as RedisClientType;
+
+      this.redisClient.on('error', (err) => {
+        this.logger.error('Redis client error:', err);
+      });
+
+      this.redisClient.on('connect', () => {
+        this.logger.log('✅ Redis client connected for event logging');
+      });
+
+      await this.redisClient.connect();
+    } catch (error) {
+      this.logger.warn(`⚠️ Failed to connect Redis for event logging: ${error.message}`);
+      this.redisClient = null;
+    }
+  }
+
+  async onModuleDestroy() {
+    if (this.redisClient) {
+      try {
+        await this.redisClient.quit();
+        this.logger.log('Redis client disconnected');
+      } catch (error) {
+        this.logger.error('Error disconnecting Redis client:', error);
+      }
+    }
+  }
 
   setRedisClient(client: RedisClientType) {
     this.redisClient = client;
@@ -64,7 +102,7 @@ export class EventLoggerService {
         duration: eventInput.duration
       };
 
-      // Stocker l'événement avec TTL (7 jours par défaut)
+      // Stocker l'événement avec TTL
       const eventKey = `auth:events:${fullEvent.id}`;
       const ttl = this.configService.get('EVENT_LOG_TTL', 604800); // 7 jours
 
@@ -76,16 +114,16 @@ export class EventLoggerService {
 
       // Ajouter à la liste des événements récents
       await this.redisClient.lPush('auth:events:recent', fullEvent.id);
-      await this.redisClient.lTrim('auth:events:recent', 0, 999); // Garder 1000 événements récents
+      await this.redisClient.lTrim('auth:events:recent', 0, 999);
 
       // Ajouter à la liste par type
       await this.redisClient.lPush(`auth:events:by_type:${fullEvent.type}`, fullEvent.id);
-      await this.redisClient.lTrim(`auth:events:by_type:${fullEvent.type}`, 0, 499); // 500 par type
+      await this.redisClient.lTrim(`auth:events:by_type:${fullEvent.type}`, 0, 499);
 
       // Ajouter à la liste par utilisateur si applicable
       if (fullEvent.userId) {
         await this.redisClient.lPush(`auth:events:by_user:${fullEvent.userId}`, fullEvent.id);
-        await this.redisClient.lTrim(`auth:events:by_user:${fullEvent.userId}`, 0, 99); // 100 par user
+        await this.redisClient.lTrim(`auth:events:by_user:${fullEvent.userId}`, 0, 99);
       }
 
       // Statistiques par jour

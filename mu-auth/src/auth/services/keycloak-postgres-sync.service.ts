@@ -18,8 +18,14 @@ export class KeycloakPostgresSyncService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    // Synchronisation initiale
-    await this.syncUsersFromKeycloakToPostgres();
+   // Attendre que AuthService soit initialisé
+    setTimeout(async () => {
+      try {
+        await this.syncUsersFromKeycloakToPostgres();
+      } catch (error) {
+        this.logger.warn(`Initial sync failed: ${error.message}`);
+      }
+    }, 5000); // Attendre 5 secondes
   }
 
   private async getKeycloakAdminToken(): Promise<string> {

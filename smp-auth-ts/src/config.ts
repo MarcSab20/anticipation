@@ -17,7 +17,7 @@ const DEFAULT_ENV_CONFIG: DefaultConfig = {
   KEYCLOAK_URL: 'http://localhost:8080',
   KEYCLOAK_REALM: 'mu-realm',
   KEYCLOAK_CLIENT_ID: 'mu-client',
-  KEYCLOAK_CLIENT_SECRET: 'changeme',
+  KEYCLOAK_CLIENT_SECRET: 'ZoEuJ00oaX9F0LfNlJnDpq6FpDKEMLCg',
   KEYCLOAK_TIMEOUT: '10000',
   OPA_URL: 'http://localhost:8181',
   OPA_POLICY_PATH: '/v1/data/authz/decision',
