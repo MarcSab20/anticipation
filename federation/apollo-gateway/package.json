@@ -1,32 +1,38 @@
 {
-    "name": "apollo-gateway-federation",
-    "version": "1.0.0",
-    "description": "Apollo Federation Gateway with distributed tracing",
-    "main": "src/index.js",
-    "type": "module",
-    "scripts": {
-      "start": "node src/index.js",
-      "dev": "nodemon src/index.js",
-      "test": "jest"
-    },
-    "dependencies": {
-      "@apollo/server": "^4.9.5",
-      "@apollo/gateway": "^2.5.7",
-      "express": "^4.18.2",
-      "cors": "^2.8.5",
-      "body-parser": "^1.20.2",
-      "prom-client": "^15.0.0",
-      "uuid": "^9.0.1",
-      "node-fetch": "^3.3.0",
-      "@opentelemetry/sdk-node": "^0.46.0",
-      "@opentelemetry/auto-instrumentations-node": "^0.41.0",
-      "@opentelemetry/resources": "^1.18.1",
-      "@opentelemetry/semantic-conventions": "^1.18.1",
-      "@opentelemetry/exporter-trace-otlp-grpc": "^0.46.0",
-      "@opentelemetry/exporter-metrics-otlp-grpc": "^0.46.0",
-      "@opentelemetry/sdk-metrics": "^1.18.1"
-    },
-    "devDependencies": {
-      "nodemon": "^3.0.2"
-    }
+  "name": "apollo-gateway-federation",
+  "version": "2.0.0",
+  "description": "Apollo Federation Gateway with smp-auth-ts integration",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "build": "tsc",
+    "test": "jest",
+    "install:lib": "npm install ../../smp-auth-ts/smp-auth-ts-*.tgz"
+  },
+  "dependencies": {
+    "@apollo/gateway": "^2.5.7",
+    "@apollo/server": "^4.9.5",
+    "@opentelemetry/auto-instrumentations-node": "^0.41.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.46.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.46.0",
+    "@opentelemetry/resources": "^1.18.1",
+    "@opentelemetry/sdk-metrics": "^1.18.1",
+    "@opentelemetry/sdk-node": "^0.46.0",
+    "@opentelemetry/semantic-conventions": "^1.18.1",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.0",
+    "prom-client": "^15.0.0",
+    "smp-auth-ts": "file:../../smp-auth-ts/smp-auth-ts-1.0.0.tgz",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/node": "^20.10.1",
+    "nodemon": "^3.0.2",
+    "typescript": "^5.3.2"
   }
+}
