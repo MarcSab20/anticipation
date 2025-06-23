@@ -1,6 +1,6 @@
 // Dans mu-auth/src/services/auth.service.ts
 import { KeycloakClientImpl } from 'smp-auth-ts/dist/clients/keycloak.client';
-import { KeycloakConfig } from 'smp-auth-ts/dist/interface/keycloak.interface';
+import { KeycloakConfig } from 'smp-auth-ts/dist/interface/auth.interface';
 import {  UserInfo } from 'smp-auth-ts/dist/interface/auth.interface';
 
 export class AuthService {

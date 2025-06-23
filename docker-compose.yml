@@ -104,74 +104,18 @@ services:
     command: ["run", "-c", "/etc/krakend/krakend.json"]
     networks:
       - mu-network
-      - monitoring
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # Prometheus
-  prometheus:
-    image: prom/prometheus:latest
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/rules:/etc/prometheus/rules
-      - prometheus-data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=30d'
-      - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
-      - '--web.route-prefix=/'
-    restart: unless-stopped
-    depends_on:
-      - krakend
-    networks:
-      - monitoring
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # Jaeger pour le tracing
-  jaeger:
-    image: jaegertracing/all-in-one:1.50
-    ports:
-      - "14268:14268"  # Collector HTTP
-      - "16686:16686"  # UI
-      - "14250:14250"  # Collector gRPC
-      - "14269:14269"  # Admin port
-    environment:
-      - COLLECTOR_OTLP_ENABLED=true
-      - SPAN_STORAGE_TYPE=memory
-      - METRICS_STORAGE_TYPE=prometheus
-      - PROMETHEUS_SERVER_URL=http://prometheus:9090
-    restart: unless-stopped
-    networks:
-      - monitoring
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:16686/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
- 
 
 networks:
   mu-network:
-    driver: bridge
-  monitoring:
     driver: bridge
 
 volumes:
   redis-data:
   postgres-data:
   keycloak-data:
-  prometheus-data:

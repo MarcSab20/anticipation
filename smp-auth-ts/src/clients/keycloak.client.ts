@@ -57,8 +57,7 @@ export class KeycloakClientImpl implements KeycloakClientExtended {
       baseURL: this.config.url,
       timeout: this.config.timeout,
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'Accept': '*/*'
       }
     };
 
@@ -148,22 +147,25 @@ export class KeycloakClientImpl implements KeycloakClientExtended {
   // ============================================================================
 
   async login(username: string, password: string): Promise<AuthResponse> {
-    const url = `/realms/${this.config.realm}/protocol/openid-connect/token`;
+    console.log('🔍 DEBUG: Login method called with new fixes');
     
-    const body = new URLSearchParams();
-    body.append('grant_type', 'password');
-    body.append('client_id', this.config.clientId);
-    body.append('client_secret', this.config.clientSecret);
-    body.append('username', username);
-    body.append('password', password);
+    const url = `/realms/${this.config.realm}/protocol/openid-connect/token`;
+    const body = `grant_type=password&client_id=${encodeURIComponent(this.config.clientId)}&client_secret=${encodeURIComponent(this.config.clientSecret)}&username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+
+    console.log('🔍 DEBUG: About to make request');
+    console.log('🔍 URL:', `${this.axiosInstance.defaults.baseURL}${url}`);
+    console.log('🔍 Body:', body);
 
     try {
       const response = await this.axiosInstance.post(url, body, {
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': '*/*',
+          'User-Agent': 'smp-auth-ts'
         }
       });
-
+      
+      console.log('🔍 DEBUG: Success!', response.status);
       return {
         access_token: response.data.access_token,
         refresh_token: response.data.refresh_token,
@@ -174,6 +176,18 @@ export class KeycloakClientImpl implements KeycloakClientExtended {
         session_state: response.data.session_state
       };
     } catch (error) {
+      console.log('🔍 DEBUG: Request failed');
+      
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any;
+        console.log('🔍 Status:', axiosError.response?.status);
+        console.log('🔍 Response headers:', axiosError.response?.headers);
+        console.log('🔍 Response data:', axiosError.response?.data);
+        console.log('🔍 Request headers sent:', axiosError.config?.headers);
+      } else {
+        console.log('🔍 Error:', error);
+      }
+      
       throw this.enhanceError(error);
     }
   }
@@ -268,15 +282,32 @@ export class KeycloakClientImpl implements KeycloakClientExtended {
   async validateToken(token: string): Promise<UserInfo> {
     const url = `/realms/${this.config.realm}/protocol/openid-connect/userinfo`;
     
+    console.log('🔍 VALIDATE_TOKEN: About to validate token');
+    console.log('🔍 URL:', `${this.axiosInstance.defaults.baseURL}${url}`);
+    
     try {
       const response = await this.axiosInstance.get(url, {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          //'Accept': 'application/json',
+          //'User-Agent': 'curl/7.81.0', 
+        //'Host': 'localhost:8080'   
         }
       });
       
+      console.log('🔍 VALIDATE_TOKEN: Success!', response.status);
       return this.mapTokenResponseToUserInfo(response.data);
     } catch (error) {
+       console.log('🔍 DEBUG: Request failed');
+      
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as any;
+        console.log('🔍 Status:', axiosError.response?.status);
+        console.log('🔍 Response data:', axiosError.response?.data);
+      }else {
+        console.log('🔍 Error:', error);
+      }
+
       throw this.enhanceError(error);
     }
   }
@@ -520,14 +551,14 @@ export class KeycloakClientImpl implements KeycloakClientExtended {
   // ============================================================================
 
   async healthCheck(): Promise<boolean> {
-    try {
-      const url = `/realms/${this.config.realm}/.well-known/openid_configuration`;
-      const response = await this.axiosInstance.get(url, { timeout: 5000 });
-      return response.status === 200;
-    } catch (error) {
-      return false;
-    }
+  try {
+    const url = `/health/ready`;
+    const response = await this.axiosInstance.get(url, { timeout: 5000 });
+    return response.status === 200;
+  } catch (error) {
+    return false;
   }
+}
 
   async getServerInfo(): Promise<any> {
     try {

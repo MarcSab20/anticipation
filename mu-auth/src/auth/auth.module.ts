@@ -28,7 +28,7 @@ import { EventLoggerService } from './services/event-logger.service';
     AuthService,
     AuthResolver,
     PostgresUserService,
-    KeycloakPostgresSyncService,
+   // KeycloakPostgresSyncService,
     EventLoggerService
   ],
   exports: [AuthService, PostgresUserService, EventLoggerService],

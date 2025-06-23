@@ -4,12 +4,9 @@ import express from 'express';
 import { expressMiddleware } from '@apollo/server/express4';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import { register, collectDefaultMetrics } from 'prom-client';
 import { v4 as uuidv4 } from 'uuid';
 import { 
-  createAuthService, 
   initializeAuthService,
-  loadConfigFromObject,
   IAuthenticationService,
   AuthConfig,
   AuthenticationOptions 
@@ -53,18 +50,11 @@ const authOptions: AuthenticationOptions = {
   }
 };
 
-// Métriques Prometheus
-collectDefaultMetrics({ prefix: 'apollo_gateway_' });
-
 // Configuration des subgraphs
 const SUBGRAPH_CONFIG = {
   'mu-auth': {
     name: 'mu-auth',
     url: process.env.MU_AUTH_URL || 'http://localhost:3001/graphql'
-  },
-  'mu-organization': {
-    name: 'mu-organization', 
-    url: process.env.MU_ORGANIZATION_URL || 'http://localhost:4004/graphql'
   }
 };
 
@@ -96,7 +86,6 @@ class AuthorizationPlugin {
   }
 
   private isPublicOperation(operation: any, operationName?: string): boolean {
-    // Définir les opérations publiques
     const publicOperations = [
       'login', 'register', 'health', 'verifyInvitationToken',
       'resetPassword', 'confirmEmail'
@@ -106,7 +95,6 @@ class AuthorizationPlugin {
       return true;
     }
 
-    // Vérifier le premier champ de la sélection
     if (operation?.selectionSet?.selections?.length > 0) {
       const firstField = operation.selectionSet.selections[0]?.name?.value;
       return publicOperations.includes(firstField);
@@ -128,7 +116,6 @@ class AuthorizationPlugin {
       const firstSelection = operation.selectionSet.selections[0];
       const fieldName = firstSelection.name?.value || 'unknown';
       
-      // Extraction des arguments pour récupérer les IDs
       let resourceId = 'unknown';
       let organizationId = null;
       
@@ -149,7 +136,6 @@ class AuthorizationPlugin {
           organizationId = orgIdArg.value.value;
         }
 
-        // Extraction depuis input pour les mutations
         const inputArg = firstSelection.arguments.find((arg: any) => arg.name.value === 'input');
         if (inputArg?.value?.fields) {
           inputArg.value.fields.forEach((field: any) => {
@@ -163,20 +149,14 @@ class AuthorizationPlugin {
         }
       }
 
-      // Mapping des opérations GraphQL vers types de ressources et actions
       const resourceMapping: Record<string, { type: string; action: string }> = {
-        // Authentification
         'login': { type: 'auth', action: 'authenticate' },
         'register': { type: 'auth', action: 'register' },
         'refreshToken': { type: 'auth', action: 'refresh' },
-        
-        // Utilisateurs
         'getUser': { type: 'user', action: 'read' },
         'updateUser': { type: 'user', action: 'update' },
         'deleteUser': { type: 'user', action: 'delete' },
         'listUsers': { type: 'user', action: 'list' },
-        
-        // Organisations
         'getOrganization': { type: 'organization', action: 'read' },
         'createOrganization': { type: 'organization', action: 'create' },
         'updateOrganization': { type: 'organization', action: 'update' },
@@ -185,15 +165,11 @@ class AuthorizationPlugin {
         'inviteUserToOrganization': { type: 'organization', action: 'invite' },
         'addUserToOrganization': { type: 'organization', action: 'add_member' },
         'removeUserFromOrganization': { type: 'organization', action: 'remove_member' },
-        
-        // UserOrganization
         'createUserOrganization': { type: 'user_organization', action: 'create' },
         'updateUserOrganization': { type: 'user_organization', action: 'update' },
         'deleteUserOrganization': { type: 'user_organization', action: 'delete' },
         'userOrganizations': { type: 'user_organization', action: 'list' },
         'userOrganization': { type: 'user_organization', action: 'read' },
-        
-        // Par défaut
         'query': { type: 'data', action: 'read' },
         'mutation': { type: 'data', action: 'write' }
       };
@@ -236,14 +212,11 @@ class AuthorizationPlugin {
   private isBusinessHours(): boolean {
     const now = new Date();
     const hour = now.getHours();
-    const day = now.getDay(); // 0 = Dimanche, 6 = Samedi
-    
-    // Lundi à Vendredi, 8h à 18h
+    const day = now.getDay();
     return day >= 1 && day <= 5 && hour >= 8 && hour < 18;
   }
 
   plugin() {
-    // Capturer le contexte de la classe
     const self = this;
     
     return {
@@ -252,15 +225,12 @@ class AuthorizationPlugin {
           async didResolveOperation(requestContext: any) {
             const { operation, operationName, contextValue } = requestContext;
             
-            // Ignorer les requêtes introspection et health checks
             if (self.isIntrospectionQuery(requestContext)) {
               return;
             }
 
-            // Extraire les informations utilisateur du contexte
             const userContext = self.extractUserContext(contextValue);
             
-            // Si pas d'utilisateur authentifié, vérifier si l'opération est publique
             if (!userContext.userId) {
               if (!self.isPublicOperation(operation, operationName)) {
                 throw new Error('Authentication required');
@@ -268,14 +238,10 @@ class AuthorizationPlugin {
               return;
             }
 
-            // Extraire les informations de ressource et action
             const resourceInfo = self.extractResourceInfo(operation, operationName);
-            
-            // Construire le contexte d'autorisation
             const authContext = self.buildAuthorizationContext(contextValue, resourceInfo);
 
             try {
-              // Vérification d'autorisation via smp-auth-ts
               const allowed = await self.authService.checkPermission(
                 userContext.token,
                 resourceInfo.resourceId,
@@ -302,7 +268,6 @@ class AuthorizationPlugin {
                 traceId: contextValue.traceId
               });
 
-              // Enrichir le contexte avec les informations d'autorisation
               contextValue.authorization = {
                 granted: true,
                 resourceType: resourceInfo.resourceType,
@@ -326,7 +291,6 @@ async function startServer() {
   try {
     console.log('🔧 Initializing smp-auth-ts service...');
     
-    // Initialiser le service d'authentification avec validation
     const authResult = await initializeAuthService(authConfig, {
       ...authOptions,
       validateConfig: true,
@@ -341,17 +305,12 @@ async function startServer() {
 
     const authService = authResult.service;
 
-    // Configuration du Gateway avec autorisation smp-auth-ts
     const gateway = new ApolloGateway({
       supergraphSdl: new IntrospectAndCompose({
         subgraphs: [
           {
             name: 'mu-auth',
             url: SUBGRAPH_CONFIG['mu-auth'].url
-          },
-          {
-            name: 'mu-organization', 
-            url: SUBGRAPH_CONFIG['mu-organization'].url
           }
         ],
         introspectionHeaders: {
@@ -364,7 +323,6 @@ async function startServer() {
       debug: process.env.NODE_ENV !== 'production',
     });
 
-    // Créer le plugin d'autorisation
     const authPlugin = new AuthorizationPlugin(authService);
 
     const server = new ApolloServer({
@@ -372,46 +330,7 @@ async function startServer() {
       introspection: true,
       csrfPrevention: false,
       plugins: [
-        authPlugin.plugin(),
-        {
-          async serverWillStart() {
-            console.log('✅ Apollo Gateway with smp-auth-ts started');
-            console.log(`📊 Subgraphs: ${Object.keys(SUBGRAPH_CONFIG).length}`);
-            console.log('🛡️ Authorization: ENABLED via smp-auth-ts');
-          },
-          async requestDidStart() {
-            return {
-              async didResolveOperation(requestContext: any) {
-                const { operationName, contextValue } = requestContext;
-                console.log(`🔍 Operation: ${operationName || 'Anonymous'}`, {
-                  traceId: contextValue.traceId,
-                  userId: contextValue.userId || 'anonymous',
-                  authorized: contextValue.authorization?.granted || false
-                });
-              },
-              async didEncounterErrors(requestContext: any) {
-                const { errors, contextValue } = requestContext;
-                console.error(`❌ GraphQL Errors:`, {
-                  traceId: contextValue.traceId,
-                  errors: errors.map((err: any) => ({
-                    message: err.message,
-                    path: err.path
-                  }))
-                });
-              },
-              async willSendResponse(requestContext: any) {
-                const { response, contextValue } = requestContext;
-                const responseTime = Date.now() - contextValue.timestamp;
-                
-                // Headers de réponse enrichis
-                response.http.headers.set('x-trace-id', contextValue.traceId);
-                response.http.headers.set('x-response-time', `${responseTime}ms`);
-                response.http.headers.set('x-auth-service', 'smp-auth-ts');
-                response.http.headers.set('x-gateway-version', '2.0.0');
-              }
-            };
-          }
-        }
+        authPlugin.plugin()
       ],
     });
 
@@ -421,17 +340,14 @@ async function startServer() {
 
     app.use(cors({
       origin: true,
-      credentials: true,
-      exposedHeaders: ['x-trace-id', 'x-response-time', 'x-auth-service']
+      credentials: true
     }));
     app.use(bodyParser.json({ limit: '10mb' }));
 
-    // Middleware de contexte enrichi
     app.use('/graphql', expressMiddleware(server, {
       context: async ({ req }) => {
         const traceId = req.headers['x-trace-id'] || uuidv4();
         
-        // Fonction utilitaire pour traiter les headers de rôles
         const processUserRoles = (rolesHeader: string | string[] | undefined): string[] => {
           if (!rolesHeader) return [];
           if (Array.isArray(rolesHeader)) {
@@ -441,40 +357,23 @@ async function startServer() {
         };
         
         return {
-          // IDs de traçabilité
           traceId,
           requestId: req.headers['x-request-id'] || uuidv4(),
           correlationId: req.headers['x-correlation-id'] || uuidv4(),
-          
-          // Informations utilisateur (de KrakenD)
           userId: req.headers['x-user-id'] as string,
           userEmail: req.headers['x-user-email'] as string,
           userName: req.headers['x-user-name'] as string,
           userRoles: processUserRoles(req.headers['x-user-roles'] as string | string[]),
           tenantId: req.headers['x-tenant-id'] as string,
-          
-          // Informations techniques
           clientIp: req.ip || req.connection.remoteAddress,
           userAgent: req.headers['user-agent'],
-          
-          // Timestamp
           timestamp: Date.now(),
-          
-          // Headers complets pour autorisation
-          headers: req.headers,
-          
-          // Métadonnées
-          federation: {
-            enabled: true,
-            gateway: 'apollo-federation',
-            authService: 'smp-auth-ts',
-            version: '2.0.0'
-          }
+          headers: req.headers
         };
       }
     }));
 
-    // Health check avec status des services
+    // Health check simplifié
     app.get('/health', async (req, res) => {
       const traceId = req.headers['x-trace-id'] || uuidv4();
       
@@ -490,29 +389,16 @@ async function startServer() {
         const opa = opaTest.status === 'fulfilled' && opaTest.value.connected;
         
         const allHealthy = keycloak && redis && opa;
-        const metrics = authService.getMetrics();
 
         const healthResponse = {
           status: allHealthy ? 'OK' : 'DEGRADED',
           timestamp: new Date().toISOString(),
-          uptime: process.uptime(),
           service: 'apollo-gateway-smp-auth',
-          version: '2.0.0',
           traceId,
           auth: {
-            service: 'smp-auth-ts',
             keycloak: { status: keycloak ? 'up' : 'down' },
             redis: { status: redis ? 'up' : 'down' },
             opa: { status: opa ? 'up' : 'down' }
-          },
-          federation: {
-            enabled: true,
-            subgraphs: Object.keys(SUBGRAPH_CONFIG)
-          },
-          metrics: {
-            totalRequests: metrics.totalRequests,
-            cacheHitRate: metrics.cacheHitRate,
-            authorizationChecks: metrics.authorizationChecks
           }
         };
 
@@ -527,55 +413,15 @@ async function startServer() {
       }
     });
 
-    // Métriques Prometheus
-    app.get('/metrics', async (req, res) => {
-      try {
-        res.set('Content-Type', register.contentType);
-        res.end(await register.metrics());
-      } catch (error) {
-        console.error('❌ Metrics error:', error);
-        res.status(500).end('Metrics error');
-      }
-    });
-
-    // Debug endpoint pour configuration
-    app.get('/debug/config', (req, res) => {
-      res.json({
-        subgraphs: SUBGRAPH_CONFIG,
-        authConfig: {
-          keycloak: {
-            url: authConfig.keycloak.url,
-            realm: authConfig.keycloak.realm,
-            clientId: authConfig.keycloak.clientId
-          },
-          opa: {
-            url: authConfig.opa.url,
-            policyPath: authConfig.opa.policyPath
-          },
-          redis: {
-            host: authConfig.redis.host,
-            port: authConfig.redis.port,
-            prefix: authConfig.redis.prefix
-          }
-        },
-        environment: process.env.NODE_ENV || 'development'
-      });
-    });
-
     const PORT = parseInt(process.env.PORT || '4000');
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log('\n🎉 Apollo Gateway with smp-auth-ts ready!');
-      console.log('═══════════════════════════════════════════════════════════');
       console.log(`🌐 GraphQL Endpoint: http://localhost:${PORT}/graphql`);
       console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
-      console.log(`📊 Metrics: http://localhost:${PORT}/metrics`);
-      console.log(`🔧 Debug Config: http://localhost:${PORT}/debug/config`);
-      console.log('═══════════════════════════════════════════════════════════');
       console.log('🛡️ Authorization: smp-auth-ts integrated');
       console.log(`📈 Federation: ${Object.keys(SUBGRAPH_CONFIG).length} subgraphs`);
-      console.log(`🏢 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log('═══════════════════════════════════════════════════════════\n');
+      console.log(`🏢 Environment: ${process.env.NODE_ENV || 'development'}\n`);
     });
 
     // Graceful shutdown
@@ -600,7 +446,6 @@ async function startServer() {
   }
 }
 
-// Gestion globale des erreurs
 process.on('unhandledRejection', (err) => {
   console.error('💥 Unhandled Rejection:', err);
 });

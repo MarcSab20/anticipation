@@ -139,30 +139,41 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   // ============================================================================
 
   async login(username: string, password: string): Promise<AuthResponse> {
-    this.ensureInitialized();
+  this.ensureInitialized();
+  
+  try {
+    this.logger.debug(`🔐 Attempting login for user: ${username}`);
+    console.log('🔍 AUTH_SERVICE: Starting login process');
     
-    try {
-      this.logger.debug(`🔐 Attempting login for user: ${username}`);
-      
-      const result = await this.authService.login(username, password);
-      
-      this.logger.log(`✅ Login successful for user: ${username}`);
-      return result;
-      
-    } catch (error) {
-      this.logger.error(`❌ Login failed for user ${username}:`, error.message);
-      
-      // Log détaillé de l'erreur pour debugging
-      if (error.response) {
-        this.logger.error('Keycloak response:', {
-          status: error.response.status,
-          data: error.response.data
-        });
-      }
-      
-      throw new Error(`Authentication failed: ${error.message}`);
+    // Authentification via Keycloak (UNE SEULE FOIS!)
+    const result = await this.authService.login(username, password);
+    console.log('🔍 AUTH_SERVICE: Keycloak login successful, got token');
+    
+    // Validation du token pour récupérer les informations utilisateur
+    //console.log('🔍 AUTH_SERVICE: About to validate token');
+    //const userInfo = await this.authService.validateToken(result.access_token);
+    //console.log('🔍 AUTH_SERVICE: Token validation successful');
+    
+    this.logger.log(`✅ Login successful for user: ${username}`);
+    console.log('🔍 AUTH_SERVICE: Login process completed successfully');
+    
+    return result; // Retourner le résultat du login, pas faire un deuxième login!
+    
+  } catch (error) {
+    console.log('🔍 AUTH_SERVICE: Error in login process:', error);
+    this.logger.error(`❌ Login failed for user ${username}:`, error.message);
+    
+    // Log détaillé de l'erreur pour debugging
+    if (error.response) {
+      this.logger.error('Keycloak response:', {
+        status: error.response.status,
+        data: error.response.data
+      });
     }
+    
+    throw new Error(`Authentication failed: ${error.message}`);
   }
+}
 
   async validateToken(token: string): Promise<TokenValidationResult> {
     this.ensureInitialized();
@@ -236,19 +247,83 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   // ============================================================================
 
   async testKeycloakConnection(): Promise<ConnectionTestResult> {
-    if (!this.isInitialized) {
-      return { connected: false, error: 'Service not initialized' };
+  if (!this.isInitialized) {
+    return { connected: false, error: 'Service not initialized' };
+  }
+  
+  try {
+    console.log('🔍 Debug: Testing Keycloak connection...');
+    
+    // Test direct avec l'instance du service
+    const result = await this.authService.testKeycloakConnection();
+    console.log('🔍 Debug: smp-auth-ts result:', result);
+    
+    // Test manuel supplémentaire
+    const keycloakUrl = this.configService.get('KEYCLOAK_URL');
+    const realm = this.configService.get('KEYCLOAK_REALM');
+    
+    console.log(`🔍 Debug: Testing manual endpoints for ${keycloakUrl}`);
+    
+    // Test des différents endpoints possibles
+    const endpointsToTest = [
+      `${keycloakUrl}/health/ready`,
+      `${keycloakUrl}/health`,
+      `${keycloakUrl}/realms/${realm}`,
+      `${keycloakUrl}/realms/${realm}/.well-known/openid_configuration`,
+      `${keycloakUrl}/`
+    ];
+    
+    for (const endpoint of endpointsToTest) {
+      try {
+        console.log(`🔍 Debug: Testing ${endpoint}`);
+        const response = await fetch(endpoint, { 
+          method: 'GET',
+          signal: AbortSignal.timeout(5000)
+        });
+        
+        console.log(`🔍 Debug: ${endpoint} -> ${response.status} ${response.statusText}`);
+        
+        if (response.ok) {
+          const contentType = response.headers.get('content-type');
+          console.log(`🔍 Debug: Content-Type: ${contentType}`);
+          
+          if (contentType?.includes('application/json')) {
+            const data = await response.json();
+            console.log(`🔍 Debug: Response keys: ${Object.keys(data).slice(0, 5).join(', ')}`);
+          }
+        }
+      } catch (error) {
+        console.log(`🔍 Debug: ${endpoint} -> ERROR: ${error.message}`);
+      }
     }
     
-    try {
-      const result = await this.authService.testKeycloakConnection();
-      this.logger.debug(`Keycloak test: ${result.connected ? '✅' : '❌'}`);
-      return result;
-    } catch (error) {
-      this.logger.error('Keycloak connection test failed:', error.message);
-      return { connected: false, error: error.message };
-    }
+    console.log('🔍 Debug: Keycloak test completed');
+    return result;
+    
+  } catch (error) {
+    console.error('🔍 Debug: Keycloak connection test failed:', error);
+    return {
+      connected: false,
+      error: `Keycloak connection failed: ${error.message}`
+    };
   }
+}
+
+// Ajoutez aussi cette méthode pour comparer les résultats
+async debugAllConnections(): Promise<void> {
+  console.log('🔍 Debug: Testing all connections...');
+  
+  const [keycloak, redis, opa] = await Promise.allSettled([
+    this.testKeycloakConnection(),
+    this.testRedisConnection(), 
+    this.testOPAConnection()
+  ]);
+  
+  console.log('🔍 Debug results:');
+  console.log('Keycloak:', keycloak);
+  console.log('Redis:', redis);
+  console.log('OPA:', opa);
+}
 
   async testRedisConnection(): Promise<ConnectionTestResult> {
     if (!this.isInitialized) {
@@ -703,4 +778,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const tokenResponse = await this.getClientCredentialsToken();
     return tokenResponse.access_token;
   }
+
+  
 }
