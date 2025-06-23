@@ -86,26 +86,6 @@ services:
     networks:
       - mu-network
 
-  # OpenTelemetry Collector
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.89.0
-    container_name: otel-collector
-    command: ["--config=/etc/otelcol-contrib/otel-collector-config.yaml"]
-    volumes:
-      - ./monitoring/otel-collector-config.yaml:/etc/otelcol-contrib/otel-collector-config.yaml
-    ports:
-      - "4317:4317"   # OTLP gRPC receiver
-      - "4318:4318"   # OTLP HTTP receiver
-      - "8889:8889"   # Prometheus metrics
-      - "13133:13133" # Health check
-    networks:
-      - mu-network
-      - monitoring
-    depends_on:
-      - jaeger
-    restart: unless-stopped
-
-  
 
   # KrakenD Gateway
   krakend:
@@ -120,8 +100,6 @@ services:
      # - FC_ENABLE=1
      # - FC_SETTINGS=/etc/krakend/settings
      # - FC_PARTIALS=/etc/krakend/partials
-    depends_on:
-      - otel-collector
     restart: unless-stopped
     command: ["run", "-c", "/etc/krakend/krakend.json"]
     networks:
@@ -154,7 +132,6 @@ services:
     restart: unless-stopped
     depends_on:
       - krakend
-      - otel-collector
     networks:
       - monitoring
     healthcheck:
@@ -185,41 +162,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # Grafana pour la visualisation
-  grafana:
-    image: grafana/grafana:10.2.0
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=secure_password
-      - GF_USERS_ALLOW_SIGN_UP=false
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./grafana:/etc/grafana/provisioning
-    networks:
-      - monitoring
-    depends_on:
-      - prometheus
-    restart: unless-stopped
-
-  # Node Exporter pour les métriques système
-  node-exporter:
-    image: prom/node-exporter:latest
-    ports:
-      - "9100:9100"
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.rootfs=/rootfs'
-      - '--path.sysfs=/host/sys'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
-    restart: unless-stopped
-    networks:
-      - monitoring
+ 
 
 networks:
   mu-network:
@@ -232,4 +175,3 @@ volumes:
   postgres-data:
   keycloak-data:
   prometheus-data:
-  grafana-data:
