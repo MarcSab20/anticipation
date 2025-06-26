@@ -1,7 +1,7 @@
 // Dans mu-auth/src/services/auth.service.ts
-import { KeycloakClientImpl } from 'smp-auth-ts/dist/clients/keycloak.client';
-import { KeycloakConfig } from 'smp-auth-ts/dist/interface/auth.interface';
-import {  UserInfo } from 'smp-auth-ts/dist/interface/auth.interface';
+import { KeycloakClientImpl } from 'smp-auth-ts';
+import { KeycloakConfig } from 'smp-auth-ts';
+import {  UserInfo } from 'smp-auth-ts';
 
 export class AuthService {
   private keycloakClient: KeycloakClientImpl;
@@ -25,7 +25,7 @@ export class AuthService {
   /**
    * Récupère les informations d'un utilisateur
    */
-  async getUserInfo(userId: string): Promise<UserInfo> {
+  async getUserInfo(userId: string): Promise<UserInfo | null> {
     try {
       return await this.keycloakClient.getUserInfo(userId);
     } catch (error) {

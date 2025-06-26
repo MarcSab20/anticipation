@@ -415,6 +415,25 @@ export class KeycloakClientImpl implements KeycloakClientExtended {
     }
   }
 
+  async resendVerificationEmail(userId: string): Promise<boolean> {
+  try {
+    console.log('🔍 RESEND_VERIFICATION: Resending verification email to user:', userId);
+    
+    const adminToken = await this.getAdminToken();
+    const url = `/admin/realms/${this.config.realm}/users/${userId}/send-verify-email`;
+    
+    await this.axiosInstance.put(url, {}, {
+      headers: { 'Authorization': `Bearer ${adminToken}` }
+    });
+    
+    console.log('🔍 RESEND_VERIFICATION: Verification email resent successfully');
+    return true;
+  } catch (error) {
+    console.warn('🔍 RESEND_VERIFICATION: Failed to resend verification email:', error);
+    return false;
+  }
+}
+
   async verifyEmail(userId: string, token: string): Promise<boolean> {
     try {
       // Cette fonctionnalité nécessite une configuration spéciale dans Keycloak
@@ -674,7 +693,7 @@ export class KeycloakClientImpl implements KeycloakClientExtended {
     return this.getAdminToken();
   }
 
-  async getUserInfos(userId: string): Promise<UserInfo | null> {
+  async getUserInfo(userId: string): Promise<UserInfo | null> {
   try {
     console.log('🔍 getUserInfo: Trying to get admin token first');
     

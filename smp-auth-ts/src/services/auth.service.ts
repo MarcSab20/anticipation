@@ -403,32 +403,32 @@ async changePassword(userId: string, oldPassword: string, newPassword: string): 
   // ============================================================================
 
   async getUserInfo(userId: string): Promise<UserInfo | null> {
-    try {
-      // Vérifier le cache d'abord
-      if (this.authOptions.enableCache) {
-        const cached = await this.getCachedUserInfo(userId);
-        if (cached) {
-          this.metrics.cacheHits++;
-          return cached;
-        }
-        this.metrics.cacheMisses++;
+  try {
+    // Vérifier le cache d'abord
+    if (this.authOptions.enableCache) {
+      const cached = await this.getCachedUserInfo(userId);
+      if (cached) {
+        this.metrics.cacheHits++;
+        return cached;
       }
-      
-      // Récupérer depuis Keycloak
-      const userInfo = await this.keycloakClient.getUserInfos(userId);
-      
-      // Mettre en cache
-      if (this.authOptions.enableCache && userInfo) {
-        await this.cacheUserInfo(userId, userInfo);
-      }
-      
-      return userInfo;
-      
-    } catch (error) {
-      console.error(`Failed to get user info for ${userId}:`, error);
-      return null;
+      this.metrics.cacheMisses++;
     }
+    
+    // Récupérer depuis Keycloak
+    const userInfo = await this.keycloakClient.getUserInfo(userId);
+    
+    // Mettre en cache
+    if (this.authOptions.enableCache && userInfo) {
+      await this.cacheUserInfo(userId, userInfo);
+    }
+    
+    return userInfo;
+    
+  } catch (error) {
+    console.error(`Failed to get user info for ${userId}:`, error);
+    return null;
   }
+}
 
   async getUserRoles(userId: string): Promise<string[]> {
     try {

@@ -30,6 +30,7 @@ export interface AuthEventInput {
   details?: Record<string, any>;
   error?: string;
   duration?: number;
+  timestamp?: string; // AJOUTER cette ligne
 }
 
 @Injectable()

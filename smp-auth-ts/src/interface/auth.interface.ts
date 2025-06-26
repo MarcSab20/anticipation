@@ -196,8 +196,7 @@ export interface IAuthenticationService {
 export interface KeycloakClient {
   validateToken(token: string): Promise<UserInfo>;
   getRoles(userId: string): Promise<string[]>;
-  getUserInfos(userId: string): Promise<UserInfo | null>;
- // getUserInfo(userId: string): Promise<UserInfo>;
+  getUserInfo(userId: string): Promise<UserInfo | null>; // Ajouter | null ici
   getAdminToken(): Promise<string>;
   login?(username: string, password: string): Promise<AuthResponse>;
   refreshToken?(refreshToken: string): Promise<AuthResponse>;
@@ -226,6 +225,7 @@ export interface KeycloakClientExtended extends KeycloakClient {
   changePassword(userId: string, oldPassword: string, newPassword: string): Promise<boolean>;
   sendVerificationEmail(userId: string, adminToken: string): Promise<void>;
   assignDefaultRoles(userId: string, adminToken: string): Promise<void>;
+  resendVerificationEmail(userId: string): Promise<boolean>;
   close(): Promise<void>;
 }
 

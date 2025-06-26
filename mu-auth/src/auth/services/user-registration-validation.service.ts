@@ -15,113 +15,39 @@ export class UserRegistrationValidationService {
   private readonly config: UserRegistrationConfig;
 
   constructor(private readonly configService: ConfigService) {
-    this.config = {
-      passwordPolicy: {
-        minLength: this.configService.get('PASSWORD_MIN_LENGTH', 8),
-        requireUppercase: this.configService.get('PASSWORD_REQUIRE_UPPERCASE', true),
-        requireLowercase: this.configService.get('PASSWORD_REQUIRE_LOWERCASE', true),
-        requireNumbers: this.configService.get('PASSWORD_REQUIRE_NUMBERS', true),
-        requireSpecialChars: this.configService.get('PASSWORD_REQUIRE_SPECIAL', true),
-        forbiddenPatterns: this.configService.get('PASSWORD_FORBIDDEN_PATTERNS', '').split(',').filter(p => p.trim())
-      },
-      emailPolicy: {
-        requireVerification: this.configService.get('EMAIL_REQUIRE_VERIFICATION', true),
-        allowedDomains: this.configService.get('EMAIL_ALLOWED_DOMAINS', '').split(',').filter(d => d.trim()),
-        blockedDomains: this.configService.get('EMAIL_BLOCKED_DOMAINS', '').split(',').filter(d => d.trim())
-      },
-      usernamePolicy: {
-        minLength: this.configService.get('USERNAME_MIN_LENGTH', 3),
-        maxLength: this.configService.get('USERNAME_MAX_LENGTH', 30),
-        allowedChars: /^[a-zA-Z0-9_-]+$/,
-        reservedUsernames: ['admin', 'root', 'system', 'test', 'api', 'www', 'mail', 'ftp']
-      },
-      registrationFlow: {
-        requireEmailVerification: this.configService.get('REGISTRATION_REQUIRE_EMAIL_VERIFICATION', true),
-        autoActivateAccount: this.configService.get('REGISTRATION_AUTO_ACTIVATE', true),
-        sendWelcomeEmail: this.configService.get('REGISTRATION_SEND_WELCOME_EMAIL', false),
-        assignDefaultRoles: this.configService.get('REGISTRATION_ASSIGN_DEFAULT_ROLES', true),
-        defaultRoles: this.configService.get('REGISTRATION_DEFAULT_ROLES', 'USER').split(',').map(r => r.trim())
-      }
-    };
-  }
-
-  // ============================================================================
-  // VALIDATION PRINCIPALE
-  // ============================================================================
-
-  async validateRegistrationData(input: UserRegistrationInputDto): Promise<{
-    valid: boolean;
-    errors: string[];
-    warnings: string[];
-  }> {
-    const errors: string[] = [];
-    const warnings: string[] = [];
-
-    try {
-      // 1. Validation du nom d'utilisateur
-      const usernameValidation = await this.validateUsername(input.username);
-      if (!usernameValidation.valid) {
-        errors.push(...usernameValidation.errors);
-      }
-      if (!usernameValidation.available) {
-        errors.push('Username is already taken');
-      }
-
-      // 2. Validation de l'email
-      const emailValidation = await this.validateEmail(input.email);
-      if (!emailValidation.valid) {
-        errors.push(...emailValidation.errors);
-      }
-      if (!emailValidation.available) {
-        errors.push('Email is already registered');
-      }
-      if (!emailValidation.deliverable) {
-        warnings.push('Email deliverability could not be verified');
-      }
-
-      // 3. Validation du mot de passe
-      const passwordValidation = await this.validatePassword(input.password);
-      if (!passwordValidation.valid) {
-        errors.push(...passwordValidation.errors);
-      }
-      if (passwordValidation.score < 70) {
-        warnings.push('Password strength could be improved');
-        warnings.push(...passwordValidation.suggestions);
-      }
-
-      // 4. Validation des données personnelles
-      if (input.firstName && input.firstName.length < 2) {
-        errors.push('First name must be at least 2 characters long');
-      }
-      if (input.lastName && input.lastName.length < 2) {
-        errors.push('Last name must be at least 2 characters long');
-      }
-
-      // 5. Validation des attributs personnalisés
-      if (input.attributes) {
-        const attributeValidation = this.validateAttributes(input.attributes);
-        if (!attributeValidation.valid) {
-          errors.push(...attributeValidation.errors);
-        }
-      }
-
-      this.logger.debug(`Validation completed for ${input.username}: ${errors.length} errors, ${warnings.length} warnings`);
-
-      return {
-        valid: errors.length === 0,
-        errors,
-        warnings
-      };
-
-    } catch (error) {
-      this.logger.error(`Validation failed for ${input.username}:`, error.message);
-      return {
-        valid: false,
-        errors: ['Validation service error'],
-        warnings: []
-      };
+  this.config = {
+    passwordPolicy: {
+      minLength: this.configService.get('PASSWORD_MIN_LENGTH', 8),
+      requireUppercase: this.configService.get('PASSWORD_REQUIRE_UPPERCASE', true),
+      requireLowercase: this.configService.get('PASSWORD_REQUIRE_LOWERCASE', true),
+      requireNumbers: this.configService.get('PASSWORD_REQUIRE_NUMBERS', true),
+      requireSpecialChars: this.configService.get('PASSWORD_REQUIRE_SPECIAL', true),
+      forbiddenPatterns: this.configService.get('PASSWORD_FORBIDDEN_PATTERNS', '').split(',').filter(p => p.trim())
+    },
+    emailPolicy: {
+      requireVerification: this.configService.get('EMAIL_REQUIRE_VERIFICATION', true),
+      allowedDomains: this.configService.get('EMAIL_ALLOWED_DOMAINS', '').split(',').filter(d => d.trim()).length > 0 
+        ? this.configService.get('EMAIL_ALLOWED_DOMAINS', '').split(',').filter(d => d.trim()) 
+        : undefined, // CORRIGER: s'assurer que c'est undefined si vide
+      blockedDomains: this.configService.get('EMAIL_BLOCKED_DOMAINS', '').split(',').filter(d => d.trim()).length > 0
+        ? this.configService.get('EMAIL_BLOCKED_DOMAINS', '').split(',').filter(d => d.trim())
+        : undefined // CORRIGER: s'assurer que c'est undefined si vide
+    },
+    usernamePolicy: {
+      minLength: this.configService.get('USERNAME_MIN_LENGTH', 3),
+      maxLength: this.configService.get('USERNAME_MAX_LENGTH', 30),
+      allowedChars: /^[a-zA-Z0-9_-]+$/,
+      reservedUsernames: ['admin', 'root', 'system', 'test', 'api', 'www', 'mail', 'ftp']
+    },
+    registrationFlow: {
+      requireEmailVerification: this.configService.get('REGISTRATION_REQUIRE_EMAIL_VERIFICATION', true),
+      autoActivateAccount: this.configService.get('REGISTRATION_AUTO_ACTIVATE', true),
+      sendWelcomeEmail: this.configService.get('REGISTRATION_SEND_WELCOME_EMAIL', false),
+      assignDefaultRoles: this.configService.get('REGISTRATION_ASSIGN_DEFAULT_ROLES', true),
+      defaultRoles: this.configService.get('REGISTRATION_DEFAULT_ROLES', 'USER').split(',').map(r => r.trim())
     }
-  }
+  };
+}
 
   // ============================================================================
   // VALIDATION DU MOT DE PASSE
@@ -243,82 +169,47 @@ export class UserRegistrationValidationService {
   // ============================================================================
 
   async validateEmail(email: string): Promise<EmailValidationResult> {
-    const errors: string[] = [];
+  const errors: string[] = [];
 
-    // Validation de base du format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      errors.push('Invalid email format');
-      return {
-        valid: false,
-        available: false,
-        deliverable: false,
-        errors
-      };
-    }
-
-    const domain = email.split('@')[1].toLowerCase();
-
-    // Vérification des domaines autorisés
-    if (this.config.emailPolicy.allowedDomains.length > 0) {
-      if (!this.config.emailPolicy.allowedDomains.includes(domain)) {
-        errors.push(`Email domain ${domain} is not allowed`);
-      }
-    }
-
-    // Vérification des domaines bloqués
-    if (this.config.emailPolicy.blockedDomains.includes(domain)) {
-      errors.push(`Email domain ${domain} is blocked`);
-    }
-
-    // Vérification de la disponibilité
-    const available = await this.checkEmailAvailability(email);
-
-    // Vérification de la délivrabilité (simulation)
-    const deliverable = await this.checkEmailDeliverability(email);
-
+  // Validation de base du format
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    errors.push('Invalid email format');
     return {
-      valid: errors.length === 0,
-      available,
-      deliverable,
+      valid: false,
+      available: false,
+      deliverable: false,
       errors
     };
   }
 
-  // ============================================================================
-  // VALIDATION DES ATTRIBUTS
-  // ============================================================================
+  const domain = email.split('@')[1].toLowerCase();
 
-  private validateAttributes(attributes: Record<string, string[]>): {
-    valid: boolean;
-    errors: string[];
-  } {
-    const errors: string[] = [];
-
-    // Validation de base des attributs
-    for (const [key, values] of Object.entries(attributes)) {
-      if (!key || key.length === 0) {
-        errors.push('Attribute key cannot be empty');
-        continue;
-      }
-
-      if (!Array.isArray(values)) {
-        errors.push(`Attribute ${key} must be an array of strings`);
-        continue;
-      }
-
-      for (const value of values) {
-        if (typeof value !== 'string') {
-          errors.push(`All values for attribute ${key} must be strings`);
-        }
-      }
+  // Vérification des domaines autorisés - CORRIGER ici
+  if (this.config.emailPolicy.allowedDomains && this.config.emailPolicy.allowedDomains.length > 0) {
+    if (!this.config.emailPolicy.allowedDomains.includes(domain)) {
+      errors.push(`Email domain ${domain} is not allowed`);
     }
-
-    return {
-      valid: errors.length === 0,
-      errors
-    };
   }
+
+  // Vérification des domaines bloqués - CORRIGER ici aussi
+  if (this.config.emailPolicy.blockedDomains && this.config.emailPolicy.blockedDomains.includes(domain)) {
+    errors.push(`Email domain ${domain} is blocked`);
+  }
+
+  // Vérification de la disponibilité
+  const available = await this.checkEmailAvailability(email);
+
+  // Vérification de la délivrabilité (simulation)
+  const deliverable = await this.checkEmailDeliverability(email);
+
+  return {
+    valid: errors.length === 0,
+    available,
+    deliverable,
+    errors
+  };
+}
 
   // ============================================================================
   // MÉTHODES DE VÉRIFICATION DE DISPONIBILITÉ
@@ -395,6 +286,112 @@ export class UserRegistrationValidationService {
     return this.config.registrationFlow;
   }
 
+  async validateRegistrationData(input: UserRegistrationInputDto): Promise<{
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  }> {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    try {
+      // 1. Validation du nom d'utilisateur
+      const usernameValidation = await this.validateUsername(input.username);
+      if (!usernameValidation.valid) {
+        errors.push(...usernameValidation.errors);
+      }
+      if (!usernameValidation.available) {
+        errors.push('Username is already taken');
+      }
+
+      // 2. Validation de l'email
+      const emailValidation = await this.validateEmail(input.email);
+      if (!emailValidation.valid) {
+        errors.push(...emailValidation.errors);
+      }
+      if (!emailValidation.available) {
+        errors.push('Email is already registered');
+      }
+      if (!emailValidation.deliverable) {
+        warnings.push('Email deliverability could not be verified');
+      }
+
+      // 3. Validation du mot de passe
+      const passwordValidation = await this.validatePassword(input.password);
+      if (!passwordValidation.valid) {
+        errors.push(...passwordValidation.errors);
+      }
+      if (passwordValidation.score < 70) {
+        warnings.push('Password strength could be improved');
+        warnings.push(...passwordValidation.suggestions);
+      }
+
+      // 4. Validation des données personnelles
+      if (input.firstName && input.firstName.length < 2) {
+        errors.push('First name must be at least 2 characters long');
+      }
+      if (input.lastName && input.lastName.length < 2) {
+        errors.push('Last name must be at least 2 characters long');
+      }
+
+      // 5. Validation des attributs personnalisés
+      if (input.attributes) {
+        const attributeValidation = this.validateAttributes(input.attributes);
+        if (!attributeValidation.valid) {
+          errors.push(...attributeValidation.errors);
+        }
+      }
+
+      console.log(`Validation completed for ${input.username}: ${errors.length} errors, ${warnings.length} warnings`);
+
+      return {
+        valid: errors.length === 0,
+        errors,
+        warnings
+      };
+
+    } catch (error) {
+      console.error(`Validation failed for ${input.username}:`, error);
+      return {
+        valid: false,
+        errors: ['Validation service error'],
+        warnings: []
+      };
+    }
+  }
+
+  private validateAttributes(attributes: Record<string, string[]>): {
+    valid: boolean;
+    errors: string[];
+  } {
+    const errors: string[] = [];
+
+    // Validation de base des attributs
+    for (const [key, values] of Object.entries(attributes)) {
+      if (!key || key.length === 0) {
+        errors.push('Attribute key cannot be empty');
+        continue;
+      }
+
+      if (!Array.isArray(values)) {
+        errors.push(`Attribute ${key} must be an array of strings`);
+        continue;
+      }
+
+      for (const value of values) {
+        if (typeof value !== 'string') {
+          errors.push(`All values for attribute ${key} must be strings`);
+        }
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+
+
   /**
    * Génère des suggestions de nom d'utilisateur basées sur l'email ou le nom
    */
@@ -422,8 +419,8 @@ export class UserRegistrationValidationService {
         }
       }
       
-      // Filtrer les suggestions valides et disponibles
-      const validSuggestions = [];
+      // Filtrer les suggestions valides et disponibles - CORRIGER ici
+      const validSuggestions: string[] = []; // Typer explicitement le tableau
       for (const suggestion of suggestions) {
         const validation = await this.validateUsername(suggestion);
         if (validation.valid && validation.available) {
@@ -434,7 +431,7 @@ export class UserRegistrationValidationService {
       return validSuggestions.slice(0, 5); // Limiter à 5 suggestions
       
     } catch (error) {
-      this.logger.error('Error generating username suggestions:', error.message);
+      console.error('Error generating username suggestions:', error);
       return [];
     }
   }

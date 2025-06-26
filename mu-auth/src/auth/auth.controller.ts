@@ -53,6 +53,95 @@ export class AuthController {
   // ENDPOINTS D'AUTHENTIFICATION EXISTANTS
   // ============================================================================
 
+    @Post('login')
+  async login(@Body() body: LoginInputDto) {
+    try {
+      const result = await this.authService.login(body.username, body.password);
+      
+      return {
+        success: true,
+        data: {
+          accessToken: result.access_token,
+          refreshToken: result.refresh_token,
+          tokenType: result.token_type,
+          expiresIn: result.expires_in,
+          scope: result.scope,
+          sessionId: result.session_id
+        }
+      };
+    } catch (error) {
+      //this.logger.error(`Login failed for user ${body.username}:`, error.message);
+      throw new HttpException(
+        { 
+          success: false, 
+          message: 'Authentication failed',
+          error: error.message 
+        }, 
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+  }
+
+  /**
+   * Rafraîchissement de token
+   */
+  @Post('refresh')
+  async refreshToken(@Body() body: RefreshTokenInputDto) {
+    try {
+      const result = await this.authService.refreshToken(body.refreshToken);
+      
+      return {
+        success: true,
+        data: {
+          accessToken: result.access_token,
+          refreshToken: result.refresh_token,
+          tokenType: result.token_type,
+          expiresIn: result.expires_in
+        }
+      };
+    } catch (error) {
+      this.logger.error('Token refresh failed:', error.message);
+      throw new HttpException(
+        { 
+          success: false, 
+          message: 'Token refresh failed',
+          error: error.message 
+        }, 
+        HttpStatus.UNAUTHORIZED
+      );
+    }
+  }
+
+  /**
+   * Déconnexion utilisateur
+   */
+  @Post('logout')
+  async logout(@Headers('authorization') authHeader: string) {
+    try {
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        throw new HttpException('Token required', HttpStatus.BAD_REQUEST);
+      }
+
+      const token = authHeader.substring(7);
+      await this.authService.logout(token);
+      
+      return {
+        success: true,
+        message: 'Logout successful'
+      };
+    } catch (error) {
+      this.logger.error('Logout failed:', error.message);
+      throw new HttpException(
+        { 
+          success: false, 
+          message: 'Logout failed',
+          error: error.message 
+        }, 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
   /**
    * Validation de nom d'utilisateur
    */
@@ -123,6 +212,174 @@ export class AuthController {
       };
     }
   }
+
+  @Post('register')
+  async registerUser(@Body() body: UserRegistrationInputDto): Promise<{
+    success: boolean;
+    data?: UserRegistrationResponseDto;
+    message?: string;
+    errors?: string[];
+  }> {
+    try {
+      this.logger.log(`Registration attempt for user: ${body.username}`);
+
+      // Vérifier si l'enregistrement est autorisé
+      if (!this.validationService.isRegistrationAllowed()) {
+        return {
+          success: false,
+          message: 'User registration is currently disabled',
+          errors: ['REGISTRATION_DISABLED']
+        };
+      }
+
+      // Nettoyer et valider les données
+      const sanitizedInput = this.validationService.sanitizeRegistrationData(body);
+      const result = await this.authService.registerUser(sanitizedInput);
+      
+      return {
+        success: result.success,
+        data: result,
+        message: result.message
+      };
+
+    } catch (error) {
+      this.logger.error(`Registration failed for user ${body.username}:`, error.message);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Registration failed',
+          error: error.message
+        },
+        HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
+  /**
+   * Vérification d'email
+   */
+  @Post('verify-email')
+  async verifyEmail(@Body() body: VerifyEmailInputDto): Promise<{
+    success: boolean;
+    data?: EmailVerificationResponseDto;
+  }> {
+    try {
+      const result = await this.authService.verifyEmail(body);
+      
+      return {
+        success: result.success,
+        data: result
+      };
+    } catch (error) {
+      this.logger.error(`Email verification failed for user ${body.userId}:`, error.message);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Email verification failed',
+          error: error.message
+        },
+        HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
+  /**
+   * Renvoi d'email de vérification
+   */
+  @Post('resend-verification')
+  async resendVerificationEmail(@Body() body: ResendVerificationInputDto): Promise<{
+    success: boolean;
+    data?: EmailVerificationResponseDto;
+  }> {
+    try {
+      const result = await this.authService.resendVerificationEmail(body);
+      
+      return {
+        success: result.success,
+        data: result
+      };
+    } catch (error) {
+      this.logger.error(`Failed to resend verification email for user ${body.userId}:`, error.message);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Failed to resend verification email',
+          error: error.message
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * Demande de reset de mot de passe
+   */
+  @Post('request-password-reset')
+  async requestPasswordReset(@Body() body: ResetPasswordInputDto): Promise<{
+    success: boolean;
+    data?: PasswordResetResponseDto;
+  }> {
+    try {
+      const result = await this.authService.resetPassword(body);
+      
+      return {
+        success: result.success,
+        data: result
+      };
+    } catch (error) {
+      this.logger.error(`Password reset request failed for email ${body.email}:`, error.message);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Password reset request failed',
+          error: error.message
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * Changement de mot de passe
+   */
+  @Post('change-password')
+  async changePassword(
+    @Headers('authorization') authHeader: string,
+    @Body() body: ChangePasswordInputDto
+  ): Promise<{
+    success: boolean;
+    data?: PasswordChangeResponseDto;
+  }> {
+    try {
+      // Optionnel: vérifier que l'utilisateur est authentifié
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        const tokenValidation = await this.authService.validateToken(token);
+        
+        if (!tokenValidation.valid || tokenValidation.userId !== body.userId) {
+          throw new HttpException('Unauthorized', HttpStatus.UNAUTHORIZED);
+        }
+      }
+
+      const result = await this.authService.changePassword(body);
+      
+      return {
+        success: result.success,
+        data: result
+      };
+    } catch (error) {
+      this.logger.error(`Password change failed for user ${body.userId}:`, error.message);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Password change failed',
+          error: error.message
+        },
+        HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
 
   /**
    * Obtenir la politique de mot de passe
@@ -300,6 +557,27 @@ export class AuthController {
         }, 
         HttpStatus.INTERNAL_SERVER_ERROR
       );
+    }
+  }
+
+  /**
+   * Validation de mot de passe
+   */
+  @Post('validate-password')
+  async validatePassword(@Body() body: { password: string }) {
+    try {
+      const result = await this.validationService.validatePassword(body.password);
+      
+      return {
+        success: true,
+        data: result
+      };
+    } catch (error) {
+      this.logger.error('Password validation failed:', error.message);
+      return {
+        success: false,
+        error: error.message
+      };
     }
   }
 
@@ -531,94 +809,7 @@ export class AuthController {
   }
 }
   
-  @Post('login')
-  async login(@Body() body: LoginInputDto) {
-    try {
-      const result = await this.authService.login(body.username, body.password);
-      
-      return {
-        success: true,
-        data: {
-          accessToken: result.access_token,
-          refreshToken: result.refresh_token,
-          tokenType: result.token_type,
-          expiresIn: result.expires_in,
-          scope: result.scope,
-          sessionId: result.session_id
-        }
-      };
-    } catch (error) {
-      //this.logger.error(`Login failed for user ${body.username}:`, error.message);
-      throw new HttpException(
-        { 
-          success: false, 
-          message: 'Authentication failed',
-          error: error.message 
-        }, 
-        HttpStatus.UNAUTHORIZED
-      );
-    }
-  }
-
-  /**
-   * Rafraîchissement de token
-   */
-  @Post('refresh')
-  async refreshToken(@Body() body: RefreshTokenInputDto) {
-    try {
-      const result = await this.authService.refreshToken(body.refreshToken);
-      
-      return {
-        success: true,
-        data: {
-          accessToken: result.access_token,
-          refreshToken: result.refresh_token,
-          tokenType: result.token_type,
-          expiresIn: result.expires_in
-        }
-      };
-    } catch (error) {
-      this.logger.error('Token refresh failed:', error.message);
-      throw new HttpException(
-        { 
-          success: false, 
-          message: 'Token refresh failed',
-          error: error.message 
-        }, 
-        HttpStatus.UNAUTHORIZED
-      );
-    }
-  }
-
-  /**
-   * Déconnexion utilisateur
-   */
-  @Post('logout')
-  async logout(@Headers('authorization') authHeader: string) {
-    try {
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        throw new HttpException('Token required', HttpStatus.BAD_REQUEST);
-      }
-
-      const token = authHeader.substring(7);
-      await this.authService.logout(token);
-      
-      return {
-        success: true,
-        message: 'Logout successful'
-      };
-    } catch (error) {
-      this.logger.error('Logout failed:', error.message);
-      throw new HttpException(
-        { 
-          success: false, 
-          message: 'Logout failed',
-          error: error.message 
-        }, 
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
+  
 
   // ============================================================================
   // NOUVEAUX ENDPOINTS POUR LA GESTION DES UTILISATEURS
@@ -627,196 +818,11 @@ export class AuthController {
   /**
    * Enregistrement d'un nouvel utilisateur
    */
-  @Post('register')
-  async registerUser(@Body() body: UserRegistrationInputDto): Promise<{
-    success: boolean;
-    data?: UserRegistrationResponseDto;
-    message?: string;
-    errors?: string[];
-  }> {
-    try {
-      this.logger.log(`Registration attempt for user: ${body.username}`);
-
-      // Vérifier si l'enregistrement est autorisé
-      if (!this.validationService.isRegistrationAllowed()) {
-        return {
-          success: false,
-          message: 'User registration is currently disabled',
-          errors: ['REGISTRATION_DISABLED']
-        };
-      }
-
-      // Nettoyer et valider les données
-      const sanitizedInput = this.validationService.sanitizeRegistrationData(body);
-      const result = await this.authService.registerUser(sanitizedInput);
-      
-      return {
-        success: result.success,
-        data: result,
-        message: result.message
-      };
-
-    } catch (error) {
-      this.logger.error(`Registration failed for user ${body.username}:`, error.message);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Registration failed',
-          error: error.message
-        },
-        HttpStatus.BAD_REQUEST
-      );
-    }
-  }
-
-  /**
-   * Vérification d'email
-   */
-  @Post('verify-email')
-  async verifyEmail(@Body() body: VerifyEmailInputDto): Promise<{
-    success: boolean;
-    data?: EmailVerificationResponseDto;
-  }> {
-    try {
-      const result = await this.authService.verifyEmail(body);
-      
-      return {
-        success: result.success,
-        data: result
-      };
-    } catch (error) {
-      this.logger.error(`Email verification failed for user ${body.userId}:`, error.message);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Email verification failed',
-          error: error.message
-        },
-        HttpStatus.BAD_REQUEST
-      );
-    }
-  }
-
-  /**
-   * Renvoi d'email de vérification
-   */
-  @Post('resend-verification')
-  async resendVerificationEmail(@Body() body: ResendVerificationInputDto): Promise<{
-    success: boolean;
-    data?: EmailVerificationResponseDto;
-  }> {
-    try {
-      const result = await this.authService.resendVerificationEmail(body);
-      
-      return {
-        success: result.success,
-        data: result
-      };
-    } catch (error) {
-      this.logger.error(`Failed to resend verification email for user ${body.userId}:`, error.message);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Failed to resend verification email',
-          error: error.message
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
-
-  /**
-   * Demande de reset de mot de passe
-   */
-  @Post('request-password-reset')
-  async requestPasswordReset(@Body() body: ResetPasswordInputDto): Promise<{
-    success: boolean;
-    data?: PasswordResetResponseDto;
-  }> {
-    try {
-      const result = await this.authService.resetPassword(body);
-      
-      return {
-        success: result.success,
-        data: result
-      };
-    } catch (error) {
-      this.logger.error(`Password reset request failed for email ${body.email}:`, error.message);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Password reset request failed',
-          error: error.message
-        },
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
-
-  /**
-   * Changement de mot de passe
-   */
-  @Post('change-password')
-  async changePassword(
-    @Headers('authorization') authHeader: string,
-    @Body() body: ChangePasswordInputDto
-  ): Promise<{
-    success: boolean;
-    data?: PasswordChangeResponseDto;
-  }> {
-    try {
-      // Optionnel: vérifier que l'utilisateur est authentifié
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const token = authHeader.substring(7);
-        const tokenValidation = await this.authService.validateToken(token);
-        
-        if (!tokenValidation.valid || tokenValidation.userId !== body.userId) {
-          throw new HttpException('Unauthorized', HttpStatus.UNAUTHORIZED);
-        }
-      }
-
-      const result = await this.authService.changePassword(body);
-      
-      return {
-        success: result.success,
-        data: result
-      };
-    } catch (error) {
-      this.logger.error(`Password change failed for user ${body.userId}:`, error.message);
-      throw new HttpException(
-        {
-          success: false,
-          message: 'Password change failed',
-          error: error.message
-        },
-        HttpStatus.BAD_REQUEST
-      );
-    }
-  }
-
+  
   // ============================================================================
   // ENDPOINTS DE VALIDATION ET SUGGESTIONS
   // ============================================================================
 
-  /**
-   * Validation de mot de passe
-   */
-  @Post('validate-password')
-  async validatePassword(@Body() body: { password: string }) {
-    try {
-      const result = await this.validationService.validatePassword(body.password);
-      
-      return {
-        success: true,
-        data: result
-      };
-    } catch (error) {
-      this.logger.error('Password validation failed:', error.message);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
+  
 
   

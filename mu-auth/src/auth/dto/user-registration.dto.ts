@@ -2,6 +2,33 @@ import { Field, InputType, ObjectType } from '@nestjs/graphql';
 import { IsEmail, IsNotEmpty, IsString, IsOptional, IsBoolean, MinLength, Matches } from 'class-validator';
 import { GraphQLJSONObject } from 'graphql-type-json';
 
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings?: string[];
+}
+
+export interface PasswordValidationResult {
+  valid: boolean;
+  errors: string[];
+  score: number; // 0-100
+  suggestions: string[];
+}
+
+export interface UsernameValidationResult {
+  valid: boolean;
+  available: boolean;
+  errors: string[];
+  suggestions: string[];
+}
+
+export interface EmailValidationResult {
+  valid: boolean;
+  available: boolean;
+  deliverable: boolean;
+  errors: string[];
+}
+
 // ============================================================================
 // INPUT DTOS
 // ============================================================================
@@ -193,26 +220,36 @@ export interface UserManagementEvent {
   };
 }
 
-export interface PasswordValidationResult {
-  valid: boolean;
-  errors: string[];
-  score: number; // 0-100
-  suggestions: string[];
+export interface UserRegistrationConfig {
+  passwordPolicy: {
+    minLength: number;
+    requireUppercase: boolean;
+    requireLowercase: boolean;
+    requireNumbers: boolean;
+    requireSpecialChars: boolean;
+    forbiddenPatterns: string[];
+  };
+  emailPolicy: {
+    requireVerification: boolean;
+    allowedDomains?: string[];
+    blockedDomains?: string[];
+  };
+  usernamePolicy: {
+    minLength: number;
+    maxLength: number;
+    allowedChars: RegExp;
+    reservedUsernames: string[];
+  };
+  registrationFlow: {
+    requireEmailVerification: boolean;
+    autoActivateAccount: boolean;
+    sendWelcomeEmail: boolean;
+    assignDefaultRoles: boolean;
+    defaultRoles: string[];
+  };
 }
 
-export interface UsernameValidationResult {
-  valid: boolean;
-  available: boolean;
-  errors: string[];
-  suggestions: string[];
-}
 
-export interface EmailValidationResult {
-  valid: boolean;
-  available: boolean;
-  deliverable: boolean;
-  errors: string[];
-}
 
 export interface UserRegistrationConfig {
   passwordPolicy: {
