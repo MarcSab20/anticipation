@@ -19,7 +19,9 @@ import {
   AuthEvent,
   EventCallback,
   AuthEventType,
-  ErrorCode
+  ErrorCode,
+  UserRegistrationData,
+  UserRegistrationResult
 } from '../interface/auth.interface.js';
 import { 
   OPAClientExtended, 
@@ -87,7 +89,7 @@ export class AuthService implements IAuthenticationService {
 
   async login(username: string, password: string): Promise<AuthResponse> {
     const startTime = Date.now();
-    const correlationId = this.generateCorrelationId();
+   
     
     try {
       this.metrics.totalRequests++;
@@ -95,32 +97,16 @@ export class AuthService implements IAuthenticationService {
       // Authentification via Keycloak
       const authResponse = await this.keycloakClient.login!(username, password);
       
-      // Validation du token pour récupérer les informations utilisateur
-      const userInfo = await this.keycloakClient.validateToken(authResponse.access_token);
-      
-      // Créer une session si le tracking est activé
-      if (this.authOptions.enableSessionTracking && authResponse.session_id) {
-        await this.createUserSession(userInfo.sub, authResponse.session_id, {
-          loginMethod: 'password',
-          correlationId
-        });
-      }
-      
-      // Mettre en cache les informations utilisateur
-      if (this.authOptions.enableCache) {
-        await this.cacheUserInfo(userInfo.sub, userInfo);
-      }
-      
       // Émettre l'événement de connexion
       await this.emitEvent({
         type: 'login',
-        userId: userInfo.sub,
+        //userId: userInfo.sub,
         username,
         success: true,
         timestamp: new Date().toISOString(),
         duration: Date.now() - startTime,
         details: {
-          correlationId,
+        //  correlationId,
           sessionId: authResponse.session_id,
           tokenType: authResponse.token_type
         }
@@ -139,7 +125,7 @@ export class AuthService implements IAuthenticationService {
         timestamp: new Date().toISOString(),
         duration: Date.now() - startTime,
         error: error instanceof Error ? error.message : String(error),
-        details: { correlationId }
+       // details: { correlationId }
       });
       
       throw this.enhanceError(error, ErrorCode.INVALID_CREDENTIALS, 'Login failed');
@@ -246,6 +232,113 @@ export class AuthService implements IAuthenticationService {
     }
   }
 
+  /**
+ * Enregistrement d'un nouvel utilisateur
+ */
+async registerUser(userData: UserRegistrationData): Promise<UserRegistrationResult> {
+  const startTime = Date.now();
+  const correlationId = this.generateCorrelationId();
+  
+  try {
+   // this.logger.log(`🔐 Starting user registration for: ${userData.username}`);
+    
+    // Déléguer vers smp-auth-ts
+    const result = await this.keycloakClient.registerUser(userData);
+    
+    if (result.success && result.userId) {
+    //  this.logger.log(`✅ User registered successfully: ${userData.username} (ID: ${result.userId})`);
+      
+      // Émettre événement de succès
+      await this.emitEvent({
+        type: 'login', // Utiliser 'login' car 'user_registered' n'existe pas dans AuthEventType
+        userId: result.userId,
+        username: userData.username,
+        success: true,
+        timestamp: new Date().toISOString(),
+        duration: Date.now() - startTime,
+        details: {
+          correlationId,
+          email: userData.email,
+          operation: 'user_registration'
+        }
+      });
+    }
+    
+    return result;
+    
+  } catch (error) {
+    //this.logger.error(`❌ User registration failed for ${userData.username}:`, error.message);
+    
+    await this.emitEvent({
+      type: 'error',
+      username: userData.username,
+      success: false,
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - startTime,
+      error: error instanceof Error ? error.message : String(error),
+      details: {
+        correlationId,
+        operation: 'user_registration'
+      }
+    });
+    
+    return {
+      success: false,
+      message: 'Registration failed due to system error',
+      errors: ['SYSTEM_ERROR']
+    };
+  }
+}
+
+/**
+ * Vérification d'email
+ */
+async verifyEmail(userId: string, token: string): Promise<boolean> {
+  try {
+   // this.logger.log(`📧 Verifying email for user: ${userId}`);
+    return await this.keycloakClient.verifyEmail(userId, token);
+  } catch (error) {
+    //this.logger.error(`❌ Email verification failed for user ${userId}:`, error.message);
+    return false;
+  }
+}
+
+/**
+ * Renvoyer l'email de vérification
+ */
+async resendVerificationEmail(userId: string): Promise<boolean> {
+ 
+   return false;
+
+}
+
+/**
+ * Demande de reset de mot de passe
+ */
+async resetPassword(email: string): Promise<boolean> {
+  try {
+    //this.logger.log(`🔑 Initiating password reset for: ${email}`);
+    return await this.keycloakClient.resetPassword(email);
+  } catch (error) {
+    //this.logger.error(`❌ Password reset failed for ${email}:`, error.message);
+    return false;
+  }
+}
+
+/**
+ * Changement de mot de passe
+ */
+async changePassword(userId: string, oldPassword: string, newPassword: string): Promise<boolean> {
+  try {
+    return await this.keycloakClient.changePassword(userId, oldPassword, newPassword);
+  } catch (error) {
+    return false;
+  }
+}
+
+
+
+
   async getClientCredentialsToken(): Promise<AuthResponse> {
     try {
       return await this.keycloakClient.getClientCredentialsToken!();
@@ -322,7 +415,7 @@ export class AuthService implements IAuthenticationService {
       }
       
       // Récupérer depuis Keycloak
-      const userInfo = await this.keycloakClient.getUserInfo(userId);
+      const userInfo = await this.keycloakClient.getUserInfos(userId);
       
       // Mettre en cache
       if (this.authOptions.enableCache && userInfo) {

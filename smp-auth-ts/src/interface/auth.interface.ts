@@ -125,6 +125,24 @@ export interface KeycloakTokenIntrospection {
   [key: string]: any;
 }
 
+export interface UserRegistrationData {
+  username: string;
+  email: string;
+  password: string;
+  firstName?: string;
+  lastName?: string;
+  enabled?: boolean;
+  emailVerified?: boolean;
+  attributes?: Record<string, string[]>;
+}
+
+export interface UserRegistrationResult {
+  success: boolean;
+  userId?: string;
+  message: string;
+  errors?: string[];
+}
+
 // ============================================================================
 // INTERFACES D'AUTHENTIFICATION
 // ============================================================================
@@ -144,6 +162,12 @@ export interface IAuthenticationService {
   // Gestion des utilisateurs
   getUserInfo(userId: string): Promise<UserInfo | null>;
   getUserRoles(userId: string): Promise<string[]>;
+
+  registerUser(userData: UserRegistrationData): Promise<UserRegistrationResult>;
+  verifyEmail(userId: string, token: string): Promise<boolean>;
+  resendVerificationEmail(userId: string): Promise<boolean>;
+  resetPassword(email: string): Promise<boolean>;
+  changePassword(userId: string, oldPassword: string, newPassword: string): Promise<boolean>;
   
   // Cache
   invalidateUserCache(userId: string): Promise<void>;
@@ -172,7 +196,8 @@ export interface IAuthenticationService {
 export interface KeycloakClient {
   validateToken(token: string): Promise<UserInfo>;
   getRoles(userId: string): Promise<string[]>;
-  getUserInfo(userId: string): Promise<UserInfo>;
+  getUserInfos(userId: string): Promise<UserInfo | null>;
+ // getUserInfo(userId: string): Promise<UserInfo>;
   getAdminToken(): Promise<string>;
   login?(username: string, password: string): Promise<AuthResponse>;
   refreshToken?(refreshToken: string): Promise<AuthResponse>;
@@ -195,6 +220,12 @@ export interface KeycloakClientExtended extends KeycloakClient {
   getServerInfo(): Promise<any>;
   validateConfig(): ValidationResult;
   testConnection(): Promise<ConnectionTestResult>;
+  registerUser(userData: UserRegistrationData): Promise<UserRegistrationResult>;
+  verifyEmail(userId: string, token: string): Promise<boolean>;
+  resetPassword(email: string): Promise<boolean>;
+  changePassword(userId: string, oldPassword: string, newPassword: string): Promise<boolean>;
+  sendVerificationEmail(userId: string, adminToken: string): Promise<void>;
+  assignDefaultRoles(userId: string, adminToken: string): Promise<void>;
   close(): Promise<void>;
 }
 

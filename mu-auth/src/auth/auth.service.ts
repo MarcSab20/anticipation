@@ -12,7 +12,9 @@ import {
   ConnectionTestResult,
   AuthEvent,
   AuthEventType,
-  EventCallback
+  EventCallback,
+  UserRegistrationData,
+  UserRegistrationResult
 } from 'smp-auth-ts';
 
 import { PostgresUserService } from './services/postgres-user.service';
@@ -23,6 +25,20 @@ import {
   TypeMappers,
   LOCAL_EVENT_TYPES
 } from '../common/types/auth-extended.types';
+
+import {
+  UserRegistrationInputDto,
+  UserRegistrationResponseDto,
+  EmailVerificationResponseDto,
+  PasswordResetResponseDto,
+  PasswordChangeResponseDto,
+  VerifyEmailInputDto,
+  ResetPasswordInputDto,
+  ChangePasswordInputDto,
+  ResendVerificationInputDto,
+  UserManagementEvent,
+  UserManagementEventType
+} from './dto/user-registration.dto';
 
 /**
  * Service d'authentification NestJS qui encapsule smp-auth-ts
@@ -37,14 +53,14 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly configService: ConfigService,
     private readonly postgresUserService: PostgresUserService,
-    private readonly eventLogger: EventLoggerService
+    private readonly eventLogger: EventLoggerService,
+    private readonly validationService: UserRegistrationValidationService
   ) {}
 
   async onModuleInit() {
     try {
-      this.logger.log('🔄 Initializing AuthService with smp-auth-ts...');
+      this.logger.log('🔄 Initializing AuthService with user management...');
       
-      // Configuration pour smp-auth-ts avec valeurs par défaut robustes
       const authConfig: AuthConfig = {
         keycloak: {
           url: this.configService.get<string>('KEYCLOAK_URL', 'http://localhost:8080'),
@@ -85,33 +101,11 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
         }
       };
 
-      // Log de la configuration (sans secrets)
-      this.logger.debug('Configuration smp-auth-ts:', {
-        keycloak: {
-          url: authConfig.keycloak.url,
-          realm: authConfig.keycloak.realm,
-          clientId: authConfig.keycloak.clientId,
-          clientSecret: authConfig.keycloak.clientSecret ? '***' : 'NOT_SET'
-        },
-        opa: authConfig.opa,
-        redis: {
-          ...authConfig.redis,
-          password: authConfig.redis.password ? '***' : 'NOT_SET'
-        },
-        options: authOptions
-      });
-
-      // Test de connectivité avant initialisation
-      await this.testExternalServices(authConfig);
-
-      // Créer le service d'authentification
       this.authService = createAuthService(authConfig, authOptions);
-
-      // Configurer les gestionnaires d'événements
       this.setupEventHandlers();
-
       this.isInitialized = true;
-      this.logger.log('✅ AuthService initialized successfully with smp-auth-ts');
+      
+      this.logger.log('✅ AuthService with user management initialized successfully');
       
     } catch (error) {
       this.logger.error('❌ Failed to initialize AuthService:', error.message);
@@ -123,6 +117,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+
   async onModuleDestroy() {
     if (this.authService && this.isInitialized) {
       try {
@@ -133,6 +128,331 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       }
     }
   }
+
+  // ============================================================================
+  // GESTION DES UTILISATEURS - NOUVELLES FONCTIONS
+  // ============================================================================
+
+  /**
+   * Enregistrement d'un nouvel utilisateur avec validation complète
+   */
+  async registerUser(input: UserRegistrationInputDto): Promise<UserRegistrationResponseDto> {
+    const startTime = Date.now();
+    const correlationId = this.generateCorrelationId();
+    
+    try {
+      this.logger.log(`🔐 Starting user registration for: ${input.username}`);
+      
+      // 1. Validation complète des données
+      const validationResult = await this.validationService.validateRegistrationData(input);
+      if (!validationResult.valid) {
+        await this.emitUserManagementEvent({
+          type: 'user_registered',
+          username: input.username,
+          email: input.email,
+          success: false,
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime,
+          error: 'Validation failed',
+          details: {
+            correlationId,
+            errors: validationResult.errors
+          }
+        });
+
+        return {
+          success: false,
+          message: 'Validation failed',
+          errors: validationResult.errors
+        };
+      }
+
+      // 2. Préparer les données pour smp-auth-ts
+      const registrationData: UserRegistrationData = {
+        username: input.username,
+        email: input.email,
+        password: input.password,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        enabled: input.enabled !== false,
+        emailVerified: input.emailVerified || false,
+        attributes: input.attributes || {}
+      };
+
+      // 3. Déléguer l'enregistrement vers smp-auth-ts
+      const result = await this.authService.registerUser(registrationData);
+      
+      if (result.success && result.userId) {
+        this.logger.log(`✅ User registered successfully: ${input.username} (ID: ${result.userId})`);
+        
+        // 4. Synchroniser vers PostgreSQL en arrière-plan
+        this.syncNewUserToPostgres(result.userId, input).catch(error => {
+          this.logger.warn(`Background PostgreSQL sync failed for user ${input.username}:`, error.message);
+        });
+
+        // 5. Émettre événement de succès
+        await this.emitUserManagementEvent({
+          type: 'user_registered',
+          userId: result.userId,
+          username: input.username,
+          email: input.email,
+          success: true,
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime,
+          details: {
+            correlationId,
+            registrationMethod: 'standard',
+            emailVerificationRequired: !input.emailVerified,
+            verificationEmailSent: !input.emailVerified
+          }
+        });
+
+        return {
+          success: true,
+          userId: result.userId,
+          message: input.emailVerified ? 
+            'User registered successfully' : 
+            'User registered successfully. Please check your email for verification.',
+          verificationEmailSent: !input.emailVerified
+        };
+      }
+      
+      return {
+        success: false,
+        message: result.message,
+        errors: result.errors
+      };
+      
+    } catch (error) {
+      this.logger.error(`❌ User registration failed for ${input.username}:`, error.message);
+      
+      await this.emitUserManagementEvent({
+        type: 'user_registered',
+        username: input.username,
+        email: input.email,
+        success: false,
+        timestamp: new Date().toISOString(),
+        duration: Date.now() - startTime,
+        error: error.message,
+        details: { correlationId }
+      });
+      
+      return {
+        success: false,
+        message: 'Registration failed due to system error',
+        errors: ['SYSTEM_ERROR']
+      };
+    }
+  }
+
+  /**
+   * Vérification d'email
+   */
+  async verifyEmail(input: VerifyEmailInputDto): Promise<EmailVerificationResponseDto> {
+    const startTime = Date.now();
+    const correlationId = this.generateCorrelationId();
+    
+    try {
+      this.logger.log(`📧 Verifying email for user: ${input.userId}`);
+      
+      const success = await this.authService.verifyEmail(input.userId, input.token);
+      
+      if (success) {
+        // Mettre à jour PostgreSQL
+        await this.postgresUserService.updateUser(input.userId, {
+          email_verified: true,
+          verification_status: 'VERIFIED'
+        }).catch(error => {
+          this.logger.warn(`Failed to update PostgreSQL for user ${input.userId}:`, error.message);
+        });
+
+        await this.emitUserManagementEvent({
+          type: 'email_verified',
+          userId: input.userId,
+          success: true,
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime,
+          details: { correlationId }
+        });
+
+        return {
+          success: true,
+          message: 'Email verified successfully'
+        };
+      } else {
+        await this.emitUserManagementEvent({
+          type: 'email_verified',
+          userId: input.userId,
+          success: false,
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime,
+          error: 'Invalid verification token',
+          details: { correlationId }
+        });
+
+        return {
+          success: false,
+          message: 'Invalid verification token or expired',
+          errorCode: 'INVALID_TOKEN'
+        };
+      }
+      
+    } catch (error) {
+      this.logger.error(`❌ Email verification failed for user ${input.userId}:`, error.message);
+      
+      return {
+        success: false,
+        message: 'Email verification failed',
+        errorCode: 'SYSTEM_ERROR'
+      };
+    }
+  }
+
+  /**
+   * Renvoi d'email de vérification
+   */
+  async resendVerificationEmail(input: ResendVerificationInputDto): Promise<EmailVerificationResponseDto> {
+    const startTime = Date.now();
+    const correlationId = this.generateCorrelationId();
+    
+    try {
+      this.logger.log(`📧 Resending verification email for user: ${input.userId}`);
+      
+      const success = await this.authService.resendVerificationEmail(input.userId);
+      
+      if (success) {
+        await this.emitUserManagementEvent({
+          type: 'email_verification_sent',
+          userId: input.userId,
+          success: true,
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime,
+          details: { correlationId, verificationEmailSent: true }
+        });
+
+        return {
+          success: true,
+          message: 'Verification email sent successfully'
+        };
+      } else {
+        return {
+          success: false,
+          message: 'Failed to send verification email',
+          errorCode: 'SEND_FAILED'
+        };
+      }
+      
+    } catch (error) {
+      this.logger.error(`❌ Failed to resend verification email for user ${input.userId}:`, error.message);
+      
+      return {
+        success: false,
+        message: 'Failed to send verification email',
+        errorCode: 'SYSTEM_ERROR'
+      };
+    }
+  }
+
+  /**
+   * Demande de reset de mot de passe
+   */
+  async resetPassword(input: ResetPasswordInputDto): Promise<PasswordResetResponseDto> {
+    const startTime = Date.now();
+    const correlationId = this.generateCorrelationId();
+    
+    try {
+      this.logger.log(`🔑 Initiating password reset for: ${input.email}`);
+      
+      const success = await this.authService.resetPassword(input.email);
+      
+      if (success) {
+        await this.emitUserManagementEvent({
+          type: 'password_reset_requested',
+          email: input.email,
+          success: true,
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime,
+          details: { correlationId }
+        });
+
+        return {
+          success: true,
+          message: 'Password reset email sent successfully',
+          requestId: correlationId
+        };
+      } else {
+        return {
+          success: false,
+          message: 'Email not found or reset failed'
+        };
+      }
+      
+    } catch (error) {
+      this.logger.error(`❌ Password reset failed for ${input.email}:`, error.message);
+      
+      return {
+        success: false,
+        message: 'Password reset request failed'
+      };
+    }
+  }
+
+  /**
+   * Changement de mot de passe
+   */
+  async changePassword(input: ChangePasswordInputDto): Promise<PasswordChangeResponseDto> {
+    const startTime = Date.now();
+    const correlationId = this.generateCorrelationId();
+    
+    try {
+      this.logger.log(`🔑 Changing password for user: ${input.userId}`);
+      
+      // Validation du nouveau mot de passe
+      const passwordValidation = await this.validationService.validatePassword(input.newPassword);
+      if (!passwordValidation.valid) {
+        return {
+          success: false,
+          message: `Password validation failed: ${passwordValidation.errors.join(', ')}`
+        };
+      }
+
+      const success = await this.authService.changePassword(input.userId, input.oldPassword, input.newPassword);
+      
+      if (success) {
+        await this.emitUserManagementEvent({
+          type: 'password_changed',
+          userId: input.userId,
+          success: true,
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime,
+          details: { 
+            correlationId,
+            passwordComplexityMet: passwordValidation.score >= 70
+          }
+        });
+
+        return {
+          success: true,
+          message: 'Password changed successfully',
+          requiresReauth: true
+        };
+      } else {
+        return {
+          success: false,
+          message: 'Password change failed. Please check your current password.'
+        };
+      }
+      
+    } catch (error) {
+      this.logger.error(`❌ Password change failed for user ${input.userId}:`, error.message);
+      
+      return {
+        success: false,
+        message: 'Password change failed due to system error'
+      };
+    }
+  }
+
 
   // ============================================================================
   // MÉTHODES AVEC GESTION D'ERREURS AMÉLIORÉE
@@ -148,11 +468,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     // Authentification via Keycloak (UNE SEULE FOIS!)
     const result = await this.authService.login(username, password);
     console.log('🔍 AUTH_SERVICE: Keycloak login successful, got token');
-    
-    // Validation du token pour récupérer les informations utilisateur
-    //console.log('🔍 AUTH_SERVICE: About to validate token');
-    //const userInfo = await this.authService.validateToken(result.access_token);
-    //console.log('🔍 AUTH_SERVICE: Token validation successful');
     
     this.logger.log(`✅ Login successful for user: ${username}`);
     console.log('🔍 AUTH_SERVICE: Login process completed successfully');
