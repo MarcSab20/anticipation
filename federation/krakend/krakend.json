@@ -1,7 +1,7 @@
 {
   "version": 3,
-  "name": "KrakenD API Gateway - Point d'entrée principal",
-  "timeout": "10000ms",
+  "name": "KrakenD API Gateway - Frontend Simulation",
+  "timeout": "30s",
   "cache_ttl": "300s",
   "output_encoding": "json",
   "port": 8090,
@@ -16,7 +16,8 @@
         "X-User-ID", 
         "X-Request-ID",
         "X-Trace-ID",
-        "X-Correlation-ID"
+        "X-Correlation-ID",
+        "Apollo-Require-Preflight"
       ],
       "expose_headers": ["Content-Length", "X-Request-ID", "X-Trace-ID"],
       "max_age": "12h"
@@ -30,8 +31,8 @@
       "listen_address": ":8091"
     },
     "telemetry/logging": {
-      "level": "DEBUG",
-      "prefix": "[KRAKEND-GATEWAY]",
+      "level": "INFO",
+      "prefix": "[KRAKEND-FRONTEND-SIM]",
       "syslog": false,
       "stdout": true,
       "format": "json"
@@ -46,6 +47,169 @@
     }
   },
   "endpoints": [
+    {
+      "endpoint": "/api/auth/sign-up",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID",
+        "X-Correlation-ID"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-frontend"
+          }
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 10,
+          "capacity": 10,
+          "client_max_rate": 5,
+          "client_capacity": 5,
+          "strategy": "ip"
+        },
+        "validation/json-schema": {
+          "type": "object",
+          "properties": {
+            "username": {"type": "string", "minLength": 3, "maxLength": 50},
+            "email": {"type": "string", "format": "email"},
+            "password": {"type": "string", "minLength": 8},
+            "firstName": {"type": "string", "minLength": 1},
+            "lastName": {"type": "string", "minLength": 1}
+          },
+          "required": ["username", "email", "password"]
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/register",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://mu-auth:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            },
+            "modifier/martian": {
+              "header.Modifier": {
+                "scope": ["request"],
+                "name": "X-Frontend-Registration",
+                "value": "true"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/sign-in",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID",
+        "X-Correlation-ID"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-frontend"
+          }
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 20,
+          "capacity": 20,
+          "client_max_rate": 10,
+          "client_capacity": 10,
+          "strategy": "ip"
+        },
+        "validation/json-schema": {
+          "type": "object",
+          "properties": {
+            "username": {"type": "string", "minLength": 1},
+            "password": {"type": "string", "minLength": 1}
+          },
+          "required": ["username", "password"]
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/login",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://mu-auth:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            },
+            "modifier/martian": {
+              "header.Modifier": {
+                "scope": ["request"],
+                "name": "X-Frontend-Login",
+                "value": "true"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/refresh",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "Authorization",
+        "X-Request-ID",
+        "X-Trace-ID"
+      ],
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 50,
+          "capacity": 50,
+          "client_max_rate": 10,
+          "client_capacity": 10,
+          "strategy": "ip"
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/refresh",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://mu-auth:3001"],
+          "disable_host_sanitize": true
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/logout",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Authorization",
+        "X-Request-ID",
+        "X-Trace-ID"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/auth/logout",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://mu-auth:3001"],
+          "disable_host_sanitize": true
+        }
+      ]
+    },
     {
       "endpoint": "/graphql",
       "method": "POST",
@@ -85,14 +249,14 @@
           "header.Modifier": {
             "scope": ["request"],
             "name": "X-Gateway-Source",
-            "value": "krakend"
+            "value": "krakend-authenticated"
           }
         },
         "qos/ratelimit/router": {
-          "max_rate": 100,
-          "capacity": 100,
-          "client_max_rate": 20,
-          "client_capacity": 20,
+          "max_rate": 200,
+          "capacity": 200,
+          "client_max_rate": 50,
+          "client_capacity": 50,
           "strategy": "ip"
         }
       },
@@ -101,7 +265,7 @@
           "url_pattern": "/graphql",
           "encoding": "no-op",
           "method": "POST",
-          "host": ["http://192.168.1.121:4000"],
+          "host": ["http://apollo-gateway:4000"],
           "disable_host_sanitize": true,
           "extra_config": {
             "backend/http": {
@@ -119,69 +283,46 @@
       ]
     },
     {
-      "endpoint": "/test/graphql",
+      "endpoint": "/api/auth/verify-email",
       "method": "POST",
-      "output_encoding": "no-op",
-      "input_headers": [
-        "Content-Type", 
-        "X-User-ID", 
-        "X-Request-ID",
-        "X-Trace-ID",
-        "X-Correlation-ID"
-      ],
+      "output_encoding": "json",
+      "input_headers": ["Content-Type"],
       "extra_config": {
-        "modifier/martian": {
-          "header.Modifier": {
-            "scope": ["request"],
-            "name": "X-Gateway-Source",
-            "value": "krakend-test"
-          }
+        "qos/ratelimit/router": {
+          "max_rate": 10,
+          "capacity": 10,
+          "strategy": "ip"
         }
       },
       "backend": [
         {
-          "url_pattern": "/graphql",
-          "encoding": "no-op",
+          "url_pattern": "/auth/verify-email",
+          "encoding": "json",
           "method": "POST",
-          "host": ["http://192.168.1.121:4000"],
-          "disable_host_sanitize": true,
-          "extra_config": {
-            "backend/http": {
-              "return_error_details": "backend_alias"
-            }
-          }
+          "host": ["http://mu-auth:3001"],
+          "disable_host_sanitize": true
         }
       ]
     },
     {
-      "endpoint": "/api/health",
-      "method": "GET",
+      "endpoint": "/api/auth/reset-password",
+      "method": "POST",
       "output_encoding": "json",
-      "backend": [
-        {
-          "url_pattern": "/health",
-          "host": ["http://192.168.1.121:4000"],
-          "extra_config": {
-            "backend/http": {
-              "return_error_details": "backend_alias"
-            }
-          }
+      "input_headers": ["Content-Type"],
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 5,
+          "capacity": 5,
+          "strategy": "ip"
         }
-      ]
-    },
-    {
-      "endpoint": "/api/debug",
-      "method": "GET",
-      "output_encoding": "json",
+      },
       "backend": [
         {
-          "url_pattern": "/debug",
-          "host": ["http://192.168.1.121:4000"],
-          "extra_config": {
-            "backend/http": {
-              "return_error_details": "backend_alias"
-            }
-          }
+          "url_pattern": "/auth/request-password-reset",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://mu-auth:3001"],
+          "disable_host_sanitize": true
         }
       ]
     },
@@ -192,10 +333,23 @@
       "backend": [
         {
           "url_pattern": "/health",
-          "host": ["http://192.168.1.121:4000"],
+          "host": ["http://apollo-gateway:4000"],
           "timeout": "8000ms",
           "mapping": {
             "status": "apollo_status"
+          },
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        },
+        {
+          "url_pattern": "/auth/health",
+          "host": ["http://mu-auth:3001"],
+          "timeout": "8000ms",
+          "mapping": {
+            "status": "auth_status"
           },
           "extra_config": {
             "backend/http": {
@@ -206,50 +360,9 @@
       ],
       "extra_config": {
         "modifier/response-body-generator": {
-          "template": "{\"status\": \"OK\", \"service\": \"krakend-gateway\", \"timestamp\": \"{{.now.Unix}}\", \"apollo_status\": \"{{.resp0_apollo_status}}\", \"trace_id\": \"{{.req_headers.X-Trace-Id}}\"}"
+          "template": "{\"status\": \"OK\", \"service\": \"krakend-frontend-gateway\", \"timestamp\": \"{{.now.Unix}}\", \"apollo_status\": \"{{.resp0_apollo_status}}\", \"auth_status\": \"{{.resp1_auth_status}}\", \"trace_id\": \"{{.req_headers.X-Trace-Id}}\"}"
         }
       }
-    },
-    {
-      "endpoint": "/api/auth/{action}",
-      "method": "POST", 
-      "output_encoding": "json",
-      "backend": [
-        {
-          "url_pattern": "/{action}",
-          "host": ["http://192.168.1.121:3001"],
-          "disable_host_sanitize": true,
-          "extra_config": {
-            "backend/http": {
-              "return_error_details": "backend_alias"
-            }
-          }
-        }
-      ],
-      "extra_config": {
-        "qos/ratelimit/router": {
-          "max_rate": 50,
-          "capacity": 50,
-          "strategy": "ip"
-        }
-      }
-    },
-    {
-      "endpoint": "/direct/auth/health",
-      "method": "GET",
-      "output_encoding": "json",
-      "backend": [
-        {
-          "url_pattern": "/auth/health",
-          "host": ["http://192.168.1.121:3001"],
-          "disable_host_sanitize": true,
-          "extra_config": {
-            "backend/http": {
-              "return_error_details": "backend_alias"
-            }
-          }
-        }
-      ]
     }
   ]
 }

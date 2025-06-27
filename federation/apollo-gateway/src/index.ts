@@ -9,12 +9,16 @@ import {
   initializeAuthService,
   IAuthenticationService,
   AuthConfig,
-  AuthenticationOptions 
+  AuthenticationOptions,
+  OPAInput
 } from 'smp-auth-ts';
 
 console.log('🚀 Starting Apollo Gateway with smp-auth-ts integration...');
 
-// Configuration unifiée via smp-auth-ts
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
 const authConfig: AuthConfig = {
   keycloak: {
     url: process.env.KEYCLOAK_URL || 'http://localhost:8080',
@@ -55,13 +59,19 @@ const SUBGRAPH_CONFIG = {
   'mu-auth': {
     name: 'mu-auth',
     url: process.env.MU_AUTH_URL || 'http://localhost:3001/graphql'
-  }
+  },
+  // Ajouter d'autres subgraphs ici quand nécessaire
+  // 'mu-organization': {
+  //   name: 'mu-organization',
+  //   url: process.env.MU_ORGANIZATION_URL || 'http://localhost:3002/graphql'
+  // }
 };
 
-/**
- * Plugin d'autorisation avancé utilisant smp-auth-ts
- */
-class AuthorizationPlugin {
+// ============================================================================
+// PLUGIN D'AUTORISATION AVEC SMP-AUTH-TS
+// ============================================================================
+
+class FrontendSimulationAuthPlugin {
   private authService: IAuthenticationService;
 
   constructor(authService: IAuthenticationService) {
@@ -78,17 +88,23 @@ class AuthorizationPlugin {
   private extractUserContext(contextValue: any) {
     return {
       userId: contextValue.userId,
-      userRoles: contextValue.userRoles || [],
-      tenantId: contextValue.tenantId,
       userEmail: contextValue.userEmail,
+      userName: contextValue.userName,
+      userRoles: contextValue.userRoles || [],
+      userOrganizations: contextValue.userOrganizations || [],
+      userDepartment: contextValue.userDepartment,
+      userClearanceLevel: contextValue.userClearanceLevel,
       token: contextValue.headers?.authorization?.replace('Bearer ', '')
     };
   }
 
   private isPublicOperation(operation: any, operationName?: string): boolean {
+    // Opérations publiques qui ne nécessitent pas d'authentification
     const publicOperations = [
       'login', 'register', 'health', 'verifyInvitationToken',
-      'resetPassword', 'confirmEmail'
+      'resetPassword', 'confirmEmail', 'validateUsername',
+      'validateEmail', 'generateUsernameSuggestions', 'getPasswordPolicy',
+      'isRegistrationEnabled'
     ];
     
     if (operationName && publicOperations.includes(operationName)) {
@@ -107,9 +123,9 @@ class AuthorizationPlugin {
     try {
       if (!operation || !operation.selectionSet?.selections?.length) {
         return {
-          resourceType: 'unknown',
-          resourceId: 'unknown', 
-          action: 'unknown'
+          resourceType: 'graphql_query',
+          resourceId: operationName || 'unknown_operation',
+          action: operation?.operation === 'mutation' ? 'write' : 'read'
         };
       }
 
@@ -119,6 +135,7 @@ class AuthorizationPlugin {
       let resourceId = 'unknown';
       let organizationId = null;
       
+      // Extraire les arguments pour identifier la ressource
       if (firstSelection.arguments) {
         const idArg = firstSelection.arguments.find((arg: any) => 
           ['id', 'userId', 'organizationId', 'userOrganizationID'].includes(arg.name.value)
@@ -136,6 +153,7 @@ class AuthorizationPlugin {
           organizationId = orgIdArg.value.value;
         }
 
+        // Vérifier dans les inputs imbriqués
         const inputArg = firstSelection.arguments.find((arg: any) => arg.name.value === 'input');
         if (inputArg?.value?.fields) {
           inputArg.value.fields.forEach((field: any) => {
@@ -149,14 +167,23 @@ class AuthorizationPlugin {
         }
       }
 
+      // Mapping des opérations GraphQL vers des ressources et actions
       const resourceMapping: Record<string, { type: string; action: string }> = {
+        // Authentification
         'login': { type: 'auth', action: 'authenticate' },
         'register': { type: 'auth', action: 'register' },
         'refreshToken': { type: 'auth', action: 'refresh' },
+        'logout': { type: 'auth', action: 'logout' },
+        'changePassword': { type: 'auth', action: 'change_password' },
+        
+        // Gestion des utilisateurs
         'getUser': { type: 'user', action: 'read' },
         'updateUser': { type: 'user', action: 'update' },
         'deleteUser': { type: 'user', action: 'delete' },
         'listUsers': { type: 'user', action: 'list' },
+        'getUserRoles': { type: 'user', action: 'read_roles' },
+        
+        // Organisations
         'getOrganization': { type: 'organization', action: 'read' },
         'createOrganization': { type: 'organization', action: 'create' },
         'updateOrganization': { type: 'organization', action: 'update' },
@@ -165,11 +192,15 @@ class AuthorizationPlugin {
         'inviteUserToOrganization': { type: 'organization', action: 'invite' },
         'addUserToOrganization': { type: 'organization', action: 'add_member' },
         'removeUserFromOrganization': { type: 'organization', action: 'remove_member' },
+        
+        // Relations utilisateur-organisation
         'createUserOrganization': { type: 'user_organization', action: 'create' },
         'updateUserOrganization': { type: 'user_organization', action: 'update' },
         'deleteUserOrganization': { type: 'user_organization', action: 'delete' },
         'userOrganizations': { type: 'user_organization', action: 'list' },
         'userOrganization': { type: 'user_organization', action: 'read' },
+        
+        // Fallback pour opérations génériques
         'query': { type: 'data', action: 'read' },
         'mutation': { type: 'data', action: 'write' }
       };
@@ -180,7 +211,7 @@ class AuthorizationPlugin {
 
       return {
         resourceType: mapping.type,
-        resourceId: resourceId,
+        resourceId: resourceId === 'unknown' ? fieldName : resourceId,
         action: mapping.action,
         organizationId: organizationId
       };
@@ -202,10 +233,12 @@ class AuthorizationPlugin {
       currentDate: new Date().toISOString(),
       riskScore: 10,
       traceId: contextValue.traceId,
-      requestSource: "apollo-gateway",
-      organizationId: resourceInfo.organizationId || contextValue.tenantId,
+      requestSource: "apollo-gateway-frontend-sim",
+      organizationId: resourceInfo.organizationId || contextValue.userOrganizations?.[0],
       userAgent: contextValue.userAgent,
-      resourcePath: `${resourceInfo.resourceType}/${resourceInfo.resourceId}`
+      resourcePath: `${resourceInfo.resourceType}/${resourceInfo.resourceId}`,
+      gatewaySource: contextValue.headers?.['x-gateway-source'] || 'unknown',
+      frontendSimulation: true
     };
   }
 
@@ -225,15 +258,17 @@ class AuthorizationPlugin {
           async didResolveOperation(requestContext: any) {
             const { operation, operationName, contextValue } = requestContext;
             
+            // Permettre les requêtes d'introspection sans autorisation
             if (self.isIntrospectionQuery(requestContext)) {
               return;
             }
 
             const userContext = self.extractUserContext(contextValue);
             
+            // Vérifier si l'utilisateur est authentifié
             if (!userContext.userId) {
               if (!self.isPublicOperation(operation, operationName)) {
-                throw new Error('Authentication required');
+                throw new Error('Authentication required - Please sign in through /api/auth/sign-in');
               }
               return;
             }
@@ -242,6 +277,14 @@ class AuthorizationPlugin {
             const authContext = self.buildAuthorizationContext(contextValue, resourceInfo);
 
             try {
+              console.log(`🔒 Checking authorization for user ${userContext.userId}:`, {
+                operation: operationName,
+                resourceType: resourceInfo.resourceType,
+                resourceId: resourceInfo.resourceId,
+                action: resourceInfo.action
+              });
+
+              // Utiliser smp-auth-ts pour vérifier les permissions
               const allowed = await self.authService.checkPermission(
                 userContext.token,
                 resourceInfo.resourceId,
@@ -251,34 +294,41 @@ class AuthorizationPlugin {
               );
 
               if (!allowed) {
-                console.warn(`Access denied for user ${userContext.userId}:`, {
+                console.warn(`❌ Access denied for user ${userContext.userId}:`, {
                   resourceType: resourceInfo.resourceType,
                   resourceId: resourceInfo.resourceId,
                   action: resourceInfo.action,
                   traceId: contextValue.traceId
                 });
                 
-                throw new Error(`Access denied: Insufficient permissions for ${resourceInfo.action} on ${resourceInfo.resourceType}`);
+                throw new Error(`Access denied: Insufficient permissions for ${resourceInfo.action} on ${resourceInfo.resourceType}. Please contact your administrator if you believe this is an error.`);
               }
 
-              console.log(`Access granted for user ${userContext.userId}:`, {
+              console.log(`✅ Access granted for user ${userContext.userId}:`, {
                 resourceType: resourceInfo.resourceType,
                 resourceId: resourceInfo.resourceId,
                 action: resourceInfo.action,
                 traceId: contextValue.traceId
               });
 
+              // Enrichir le contexte avec les informations d'autorisation
               contextValue.authorization = {
                 granted: true,
                 resourceType: resourceInfo.resourceType,
                 resourceId: resourceInfo.resourceId,
                 action: resourceInfo.action,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
+                authMethod: 'smp-auth-ts'
               };
 
             } catch (error) {
-              console.error(`Authorization check failed:`, error);
-              throw new Error(`Access denied: ${error instanceof Error ? error.message : 'Unknown error'}`);
+              console.error(`💥 Authorization check failed:`, error);
+              
+              if (error) {
+                throw error; // Re-throw access denied errors as-is
+              }
+              
+              throw new Error(`Authorization check failed: ${error instanceof Error ? error.message : 'Unknown error'}. This might be a temporary issue, please try again.`);
             }
           }
         };
@@ -287,7 +337,11 @@ class AuthorizationPlugin {
   }
 }
 
-async function startServer() {
+// ============================================================================
+// DÉMARRAGE DU SERVICE
+// ============================================================================
+
+async function startGateway() {
   try {
     console.log('🔧 Initializing smp-auth-ts service...');
     
@@ -299,12 +353,14 @@ async function startServer() {
 
     if (!authResult.status.ready) {
       console.warn('⚠️ Auth service started with issues:', authResult.errors);
+      console.warn('🔄 Continuing with limited functionality...');
     } else {
       console.log('✅ Auth service initialized successfully');
     }
 
     const authService = authResult.service;
 
+    // Configuration de la gateway Apollo
     const gateway = new ApolloGateway({
       supergraphSdl: new IntrospectAndCompose({
         subgraphs: [
@@ -312,25 +368,54 @@ async function startServer() {
             name: 'mu-auth',
             url: SUBGRAPH_CONFIG['mu-auth'].url
           }
+          // Ajouter d'autres subgraphs ici
         ],
         introspectionHeaders: {
-          'User-Agent': 'Apollo-Gateway-Federation-v2',
+          'User-Agent': 'Apollo-Gateway-Frontend-Simulation',
           'Accept': 'application/json',
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'X-Gateway-Source': 'apollo-federation'
         },
-        pollIntervalInMs: 10000,
+        pollIntervalInMs: 30000, // Poll plus fréquent pour le développement
       }),
       debug: process.env.NODE_ENV !== 'production',
     });
 
-    const authPlugin = new AuthorizationPlugin(authService);
+    const authPlugin = new FrontendSimulationAuthPlugin(authService);
 
     const server = new ApolloServer({
       gateway,
       introspection: true,
       csrfPrevention: false,
       plugins: [
-        authPlugin.plugin()
+        authPlugin.plugin(),
+        // Plugin de logging pour le frontend simulation
+        {
+          async requestDidStart() {
+            return {
+              async didReceiveRequest(requestContext: any) {
+                const { request } = requestContext;
+                console.log(`📨 GraphQL Request received:`, {
+                  operationName: request.operationName,
+                  variables: request.variables,
+                  timestamp: new Date().toISOString(),
+                  source: 'frontend-simulation'
+                });
+              },
+              async willSendResponse(requestContext: any) {
+                const { response } = requestContext;
+                if (response.body.kind === 'single' && response.body.singleResult.errors) {
+                  console.log(`❌ GraphQL Response with errors:`, {
+                    errors: response.body.singleResult.errors.map((err: any) => err.message),
+                    timestamp: new Date().toISOString()
+                  });
+                } else {
+                  console.log(`✅ GraphQL Response sent successfully`);
+                }
+              }
+            };
+          }
+        }
       ],
     });
 
@@ -344,6 +429,7 @@ async function startServer() {
     }));
     app.use(bodyParser.json({ limit: '10mb' }));
 
+    // Middleware de contexte pour simuler le frontend
     app.use('/graphql', expressMiddleware(server, {
       context: async ({ req }) => {
         const traceId = req.headers['x-trace-id'] || uuidv4();
@@ -353,7 +439,15 @@ async function startServer() {
           if (Array.isArray(rolesHeader)) {
             return rolesHeader.flatMap(role => role.split(','));
           }
-          return rolesHeader.split(',');
+          return rolesHeader.split(',').map(role => role.trim()).filter(Boolean);
+        };
+
+        const processUserOrganizations = (orgHeader: string | string[] | undefined): string[] => {
+          if (!orgHeader) return [];
+          if (Array.isArray(orgHeader)) {
+            return orgHeader.flatMap(org => org.split(','));
+          }
+          return orgHeader.split(',').map(org => org.trim()).filter(Boolean);
         };
         
         return {
@@ -364,16 +458,25 @@ async function startServer() {
           userEmail: req.headers['x-user-email'] as string,
           userName: req.headers['x-user-name'] as string,
           userRoles: processUserRoles(req.headers['x-user-roles'] as string | string[]),
+          userOrganizations: processUserOrganizations(req.headers['x-user-organizations'] as string | string[]),
+          userDepartment: req.headers['x-user-department'] as string,
+          userClearanceLevel: req.headers['x-user-clearance-level'] ? 
+            parseInt(req.headers['x-user-clearance-level'] as string) : undefined,
           tenantId: req.headers['x-tenant-id'] as string,
           clientIp: req.ip || req.connection.remoteAddress,
           userAgent: req.headers['user-agent'],
           timestamp: Date.now(),
-          headers: req.headers
+          headers: req.headers,
+          frontendSimulation: {
+            gatewaySource: req.headers['x-gateway-source'] || 'unknown',
+            forwardedBy: req.headers['x-forwarded-by'] || 'unknown',
+            originalRequest: true
+          }
         };
       }
     }));
 
-    // Health check simplifié
+    // Health check avec informations complètes
     app.get('/health', async (req, res) => {
       const traceId = req.headers['x-trace-id'] || uuidv4();
       
@@ -389,16 +492,47 @@ async function startServer() {
         const opa = opaTest.status === 'fulfilled' && opaTest.value.connected;
         
         const allHealthy = keycloak && redis && opa;
+        const metrics = authService.getMetrics();
 
         const healthResponse = {
           status: allHealthy ? 'OK' : 'DEGRADED',
           timestamp: new Date().toISOString(),
-          service: 'apollo-gateway-smp-auth',
+          service: 'apollo-gateway-frontend-simulation',
           traceId,
           auth: {
-            keycloak: { status: keycloak ? 'up' : 'down' },
-            redis: { status: redis ? 'up' : 'down' },
-            opa: { status: opa ? 'up' : 'down' }
+            keycloak: { 
+              status: keycloak ? 'up' : 'down',
+              details: keycloakTest.status === 'fulfilled' ? keycloakTest.value : undefined
+            },
+            redis: { 
+              status: redis ? 'up' : 'down',
+              details: redisTest.status === 'fulfilled' ? redisTest.value : undefined
+            },
+            opa: { 
+              status: opa ? 'up' : 'down',
+              details: opaTest.status === 'fulfilled' ? opaTest.value : undefined
+            }
+          },
+          gateway: {
+            subgraphs: Object.keys(SUBGRAPH_CONFIG),
+            federationVersion: '2.0',
+            introspectionEnabled: true
+          },
+          metrics: {
+            totalRequests: metrics.totalRequests || 0,
+            successfulLogins: metrics.successfulLogins || 0,
+            authorizationChecks: metrics.authorizationChecks || 0,
+            cacheHitRate: metrics.cacheHitRate || 0
+          },
+          simulation: {
+            frontendMode: true,
+            authenticationFlow: 'krakend -> mu-auth -> keycloak',
+            authorizationFlow: 'apollo-gateway -> smp-auth-ts -> opa',
+            supportedOperations: [
+              'sign-up via /api/auth/sign-up',
+              'sign-in via /api/auth/sign-in', 
+              'graphql queries via /graphql'
+            ]
           }
         };
 
@@ -407,8 +541,94 @@ async function startServer() {
         res.status(500).json({
           status: 'ERROR',
           timestamp: new Date().toISOString(),
+          service: 'apollo-gateway-frontend-simulation',
           traceId,
           error: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
+
+    // Endpoint de debug pour les développeurs
+    app.get('/debug', async (req, res) => {
+      const traceId = req.headers['x-trace-id'] || uuidv4();
+      
+      try {
+        const metrics = authService.getMetrics();
+        
+        const debugInfo = {
+          timestamp: new Date().toISOString(),
+          traceId,
+          service: 'apollo-gateway-frontend-simulation',
+          configuration: {
+            subgraphs: SUBGRAPH_CONFIG,
+            authConfig: {
+              keycloak: {
+                url: authConfig.keycloak.url,
+                realm: authConfig.keycloak.realm,
+                clientId: authConfig.keycloak.clientId
+              },
+              opa: {
+                url: authConfig.opa.url,
+                policyPath: authConfig.opa.policyPath
+              },
+              redis: {
+                host: authConfig.redis.host,
+                port: authConfig.redis.port,
+                db: authConfig.redis.db
+              }
+            }
+          },
+          metrics,
+          environment: {
+            nodeEnv: process.env.NODE_ENV || 'development',
+            port: process.env.PORT || 4000,
+            version: process.env.npm_package_version || 'unknown'
+          },
+          simulationGuide: {
+            signUp: {
+              url: 'POST /api/auth/sign-up',
+              payload: {
+                username: 'john_doe',
+                email: 'john@example.com',
+                password: 'SecurePass123!',
+                firstName: 'John',
+                lastName: 'Doe'
+              }
+            },
+            signIn: {
+              url: 'POST /api/auth/sign-in',
+              payload: {
+                username: 'john_doe',
+                password: 'SecurePass123!'
+              }
+            },
+            graphqlQuery: {
+              url: 'POST /graphql',
+              headers: {
+                'Authorization': 'Bearer <token_from_sign_in>',
+                'Content-Type': 'application/json'
+              },
+              payload: {
+                query: `query GetUser($userId: ID!) {
+                  getUser(userId: $userId) {
+                    sub
+                    email
+                    given_name
+                    family_name
+                    roles
+                  }
+                }`,
+                variables: { userId: "<user_id>" }
+              }
+            }
+          }
+        };
+
+        res.json(debugInfo);
+      } catch (error) {
+        res.status(500).json({
+          error: error instanceof Error ? error.message : 'Unknown error',
+          traceId
         });
       }
     });
@@ -416,12 +636,20 @@ async function startServer() {
     const PORT = parseInt(process.env.PORT || '4000');
 
     app.listen(PORT, '0.0.0.0', () => {
-      console.log('\n🎉 Apollo Gateway with smp-auth-ts ready!');
+      console.log('\n🎉 Apollo Gateway Frontend Simulation ready!');
       console.log(`🌐 GraphQL Endpoint: http://localhost:${PORT}/graphql`);
       console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
-      console.log('🛡️ Authorization: smp-auth-ts integrated');
-      console.log(`📈 Federation: ${Object.keys(SUBGRAPH_CONFIG).length} subgraphs`);
-      console.log(`🏢 Environment: ${process.env.NODE_ENV || 'development'}\n`);
+      console.log(`🐛 Debug Info: http://localhost:${PORT}/debug`);
+      console.log('');
+      console.log('🔄 Frontend Simulation Flow:');
+      console.log('  1️⃣ Sign-up: KrakenD /api/auth/sign-up → mu-auth → Keycloak');
+      console.log('  2️⃣ Sign-in: KrakenD /api/auth/sign-in → mu-auth → Keycloak');
+      console.log('  3️⃣ GraphQL: KrakenD /graphql → Apollo Gateway → smp-auth-ts → OPA → Subgraphs');
+      console.log('');
+      console.log('🛡️ Authorization: smp-auth-ts integrated with OPA');
+      console.log(`📈 Federation: ${Object.keys(SUBGRAPH_CONFIG).length} subgraph(s) configured`);
+      console.log(`🏢 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log('\n🚀 Ready to simulate frontend requests!');
     });
 
     // Graceful shutdown
@@ -446,6 +674,7 @@ async function startServer() {
   }
 }
 
+// Gestion des erreurs non capturées
 process.on('unhandledRejection', (err) => {
   console.error('💥 Unhandled Rejection:', err);
 });
@@ -455,4 +684,5 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-startServer();
+// Démarrage du service
+startGateway();
