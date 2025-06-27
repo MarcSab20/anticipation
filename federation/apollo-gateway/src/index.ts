@@ -1,3 +1,5 @@
+// federation/apollo-gateway/src/index.ts - Version complète corrigée
+
 import { ApolloServer } from '@apollo/server';
 import { ApolloGateway, IntrospectAndCompose } from '@apollo/gateway';
 import express from 'express';
@@ -68,7 +70,7 @@ const SUBGRAPH_CONFIG = {
 };
 
 // ============================================================================
-// PLUGIN D'AUTORISATION AVEC SMP-AUTH-TS
+// PLUGIN D'AUTORISATION AVEC SMP-AUTH-TS - VERSION CORRIGÉE
 // ============================================================================
 
 class FrontendSimulationAuthPlugin {
@@ -98,24 +100,63 @@ class FrontendSimulationAuthPlugin {
     };
   }
 
+  // ============================================================================
+  // CORRECTION: Liste étendue des opérations publiques
+  // ============================================================================
   private isPublicOperation(operation: any, operationName?: string): boolean {
     // Opérations publiques qui ne nécessitent pas d'authentification
     const publicOperations = [
+      // Authentification de base
       'login', 'register', 'health', 'verifyInvitationToken',
       'resetPassword', 'confirmEmail', 'validateUsername',
       'validateEmail', 'generateUsernameSuggestions', 'getPasswordPolicy',
-      'isRegistrationEnabled'
+      'isRegistrationEnabled',
+      
+      // AJOUT: Opérations d'enregistrement d'utilisateurs
+      'registerUser', 'verifyEmail', 'resendVerificationEmail',
+      'requestPasswordReset', 'validatePassword',
+      
+      // AJOUT: Opérations de validation
+      'validateUsername', 'validateEmail', 'generateUsernameSuggestions',
+      'getRegistrationStatus', 'getPasswordPolicy',
+      
+      // Tests et monitoring
+      'testRedisConnection', 'testKeycloakConnection', 'testOPAConnection',
+      'getAuthenticationStats'
     ];
     
+    // Vérifier par nom d'opération
     if (operationName && publicOperations.includes(operationName)) {
+      console.log(`✅ Public operation detected by name: ${operationName}`);
       return true;
     }
 
+    // Vérifier par premier field de la sélection
     if (operation?.selectionSet?.selections?.length > 0) {
       const firstField = operation.selectionSet.selections[0]?.name?.value;
-      return publicOperations.includes(firstField);
+      if (firstField && publicOperations.includes(firstField)) {
+        console.log(`✅ Public operation detected by field: ${firstField}`);
+        return true;
+      }
     }
 
+    // CORRECTION: Vérifier les mutations spécifiques
+    if (operation?.operation === 'mutation') {
+      const mutationFields = operation.selectionSet?.selections?.map(
+        (selection: any) => selection.name?.value
+      ) || [];
+      
+      const hasPublicMutation = mutationFields.some((field: string) => 
+        publicOperations.includes(field)
+      );
+      
+      if (hasPublicMutation) {
+        console.log(`✅ Public mutation detected: ${mutationFields.join(', ')}`);
+        return true;
+      }
+    }
+
+    console.log(`🔒 Private operation: ${operationName || 'unknown'}`);
     return false;
   }
 
@@ -167,16 +208,32 @@ class FrontendSimulationAuthPlugin {
         }
       }
 
-      // Mapping des opérations GraphQL vers des ressources et actions
+      // CORRECTION: Mapping des opérations GraphQL vers des ressources et actions
       const resourceMapping: Record<string, { type: string; action: string }> = {
-        // Authentification
+        // Authentification (publique)
         'login': { type: 'auth', action: 'authenticate' },
         'register': { type: 'auth', action: 'register' },
+        'registerUser': { type: 'auth', action: 'register' }, // AJOUT
         'refreshToken': { type: 'auth', action: 'refresh' },
         'logout': { type: 'auth', action: 'logout' },
         'changePassword': { type: 'auth', action: 'change_password' },
         
-        // Gestion des utilisateurs
+        // Gestion des utilisateurs (publique pour enregistrement)
+        'verifyEmail': { type: 'auth', action: 'verify_email' }, // AJOUT
+        'resendVerificationEmail': { type: 'auth', action: 'resend_verification' }, // AJOUT
+        'requestPasswordReset': { type: 'auth', action: 'reset_password' }, // AJOUT
+        'resetPassword': { type: 'auth', action: 'reset_password' },
+        
+        // Validation (publique)
+        'validateUsername': { type: 'validation', action: 'validate' }, // AJOUT
+        'validateEmail': { type: 'validation', action: 'validate' }, // AJOUT
+        'validatePassword': { type: 'validation', action: 'validate' }, // AJOUT
+        'generateUsernameSuggestions': { type: 'validation', action: 'suggest' }, // AJOUT
+        'getPasswordPolicy': { type: 'policy', action: 'read' }, // AJOUT
+        'getRegistrationStatus': { type: 'policy', action: 'read' }, // AJOUT
+        'isRegistrationEnabled': { type: 'policy', action: 'read' }, // AJOUT
+        
+        // Utilisateurs (privé)
         'getUser': { type: 'user', action: 'read' },
         'updateUser': { type: 'user', action: 'update' },
         'deleteUser': { type: 'user', action: 'delete' },
@@ -199,6 +256,12 @@ class FrontendSimulationAuthPlugin {
         'deleteUserOrganization': { type: 'user_organization', action: 'delete' },
         'userOrganizations': { type: 'user_organization', action: 'list' },
         'userOrganization': { type: 'user_organization', action: 'read' },
+        
+        // Tests et monitoring (publique)
+        'testRedisConnection': { type: 'system', action: 'test' },
+        'testKeycloakConnection': { type: 'system', action: 'test' },
+        'testOPAConnection': { type: 'system', action: 'test' },
+        'getAuthenticationStats': { type: 'system', action: 'read' },
         
         // Fallback pour opérations génériques
         'query': { type: 'data', action: 'read' },
@@ -258,19 +321,27 @@ class FrontendSimulationAuthPlugin {
           async didResolveOperation(requestContext: any) {
             const { operation, operationName, contextValue } = requestContext;
             
+            console.log(`🔍 Processing operation: ${operationName || 'unnamed'}`);
+            console.log(`🔍 Operation type: ${operation?.operation}`);
+            
             // Permettre les requêtes d'introspection sans autorisation
             if (self.isIntrospectionQuery(requestContext)) {
+              console.log('✅ Introspection query - bypassing auth');
+              return;
+            }
+
+            // CORRECTION: Vérifier d'abord si c'est une opération publique
+            if (self.isPublicOperation(operation, operationName)) {
+              console.log(`✅ Public operation - bypassing auth: ${operationName}`);
               return;
             }
 
             const userContext = self.extractUserContext(contextValue);
             
-            // Vérifier si l'utilisateur est authentifié
+            // Vérifier si l'utilisateur est authentifié pour les opérations privées
             if (!userContext.userId) {
-              if (!self.isPublicOperation(operation, operationName)) {
-                throw new Error('Authentication required - Please sign in through /api/auth/sign-in');
-              }
-              return;
+              console.log(`❌ Authentication required for operation: ${operationName}`);
+              throw new Error('Authentication required - Please sign in through /api/auth/sign-in');
             }
 
             const resourceInfo = self.extractResourceInfo(operation, operationName);
