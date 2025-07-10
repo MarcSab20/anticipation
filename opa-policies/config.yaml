@@ -1,0 +1,18 @@
+services:
+  - name: opa
+    url: http://localhost:8181
+
+default_decision: "authz/allow"
+default_authorization_decision: "authz/allow"
+
+http:
+  cors:
+    origins:
+      - "*"
+    methods:
+      - GET
+      - POST
+      - OPTIONS
+    headers:
+      - Authorization
+      - Content-Type

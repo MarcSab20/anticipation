@@ -1,0 +1,135 @@
+#version: '3.8'
+
+services:
+  # Open Policy Agent (OPA)
+  opa:
+    image: openpolicyagent/opa:latest
+    ports:
+      - "8181:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-level=debug"
+      - "--set=decision_logs.console=true"
+      - "/policies/authz.rego"
+    volumes:
+      - ./opa-policies/policies:/policies
+    restart: unless-stopped
+    networks:
+      - mu-network
+
+  # Redis pour le cache
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --protected-mode no
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - mu-network
+  
+  # PostgreSQL pour Keycloak
+  postgres:
+    image: postgres:15
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    ports:
+      - "5432:5432"
+    networks:
+      - mu-network
+
+  postgres-muauth:
+    image: postgres:15
+    volumes:
+      - postgres-muauth-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: mu_auth
+      POSTGRES_USER: mu_auth
+      POSTGRES_PASSWORD: mu_auth_password
+    ports:
+      - "5433:5432" 
+    networks:
+      - mu-network
+
+  # Keycloak - Serveur d'identité
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.1
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: 'true'
+      KC_METRICS_ENABLED: 'true'
+      KC_HTTP_ENABLED: 'true'
+      KC_HOSTNAME_STRICT: 'false'
+    command: 
+      - start-dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - mu-network
+
+
+  # KrakenD Gateway
+  krakend:
+    image: devopsfaith/krakend:2.6
+    volumes:
+      - ./federation/krakend:/etc/krakend
+    ports:
+      - "8090:8090"
+      - "8091:8091"
+    environment:
+      - KRAKEND_PORT=8090
+     # - FC_ENABLE=1
+     # - FC_SETTINGS=/etc/krakend/settings
+     # - FC_PARTIALS=/etc/krakend/partials
+    restart: unless-stopped
+    command: ["run", "-c", "/etc/krakend/krakend.json"]
+    networks:
+      - mu-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+
+networks:
+  mu-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  postgres-data:
+  postgres-muauth-data:
+  keycloak-data:

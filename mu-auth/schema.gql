@@ -1,0 +1,1125 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+type AuthorizationResponseDto {
+  """Indique si l'accès est autorisé"""
+  allow: Boolean!
+
+  """Raison de la décision"""
+  reason: String
+
+  """Timestamp de la décision"""
+  timestamp: String
+
+  """Temps d'évaluation en ms"""
+  evaluationTime: Float
+
+  """Résultat mis en cache"""
+  cached: Boolean
+
+  """ID de corrélation"""
+  correlationId: String
+}
+
+type AuthorizationLogDto {
+  """Identifiant du log"""
+  id: ID!
+
+  """Identifiant de l'utilisateur"""
+  userId: ID!
+
+  """Identifiant de la ressource"""
+  resourceId: ID!
+
+  """Type de ressource"""
+  resourceType: String!
+
+  """Action demandée"""
+  action: String!
+
+  """Décision d'autorisation"""
+  allow: Boolean!
+
+  """Raison de la décision"""
+  reason: String
+
+  """Contexte de la demande"""
+  context: JSONObject
+
+  """Timestamp de la décision"""
+  timestamp: String!
+
+  """Temps d'évaluation en ms"""
+  evaluationTime: Float
+
+  """ID de corrélation"""
+  correlationId: String
+
+  """ID de session"""
+  sessionId: String
+
+  """Adresse IP"""
+  ip: String
+
+  """User Agent"""
+  userAgent: String
+}
+
+"""
+The `JSONObject` scalar type represents JSON objects as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
+"""
+scalar JSONObject
+
+type MFAMethodDto {
+  """ID de la méthode"""
+  id: ID!
+
+  """ID utilisateur"""
+  userId: ID!
+
+  """Type de méthode"""
+  type: String!
+
+  """Nom de la méthode"""
+  name: String!
+
+  """Méthode activée"""
+  isEnabled: Boolean!
+
+  """Méthode primaire"""
+  isPrimary: Boolean!
+
+  """Méthode vérifiée"""
+  isVerified: Boolean!
+
+  """Date de création"""
+  createdAt: String!
+
+  """Dernière utilisation"""
+  lastUsedAt: String
+
+  """Métadonnées (masquées)"""
+  metadata: JSONObject
+}
+
+type MFASetupResultDto {
+  """Succès de la configuration"""
+  success: Boolean!
+
+  """ID de la méthode"""
+  methodId: String
+
+  """Secret TOTP (à afficher une seule fois)"""
+  secret: String
+
+  """URL du QR Code"""
+  qrCodeUrl: String
+
+  """Codes de récupération"""
+  backupCodes: [String!]
+
+  """Vérification requise"""
+  verificationRequired: Boolean
+
+  """Message"""
+  message: String
+}
+
+type MFAChallengeDto {
+  """ID du challenge"""
+  id: ID!
+
+  """ID utilisateur"""
+  userId: ID!
+
+  """ID de la méthode"""
+  methodId: String!
+
+  """Type de méthode"""
+  methodType: String!
+
+  """Statut du challenge"""
+  status: String!
+
+  """Date de création"""
+  createdAt: String!
+
+  """Date d'expiration"""
+  expiresAt: String!
+
+  """Tentatives restantes"""
+  attemptsRemaining: Float!
+
+  """Métadonnées"""
+  metadata: JSONObject
+}
+
+type MFAVerificationResultDto {
+  """Succès de la vérification"""
+  success: Boolean!
+
+  """Statut"""
+  status: String!
+
+  """Message"""
+  message: String
+
+  """Tentatives restantes"""
+  attemptsRemaining: Float
+
+  """Prochaine tentative à"""
+  nextAttemptAt: String
+
+  """Appareil de confiance"""
+  deviceTrusted: Boolean
+}
+
+type TrustedDeviceDto {
+  """ID de l'appareil"""
+  id: ID!
+
+  """ID utilisateur"""
+  userId: ID!
+
+  """Empreinte de l'appareil"""
+  fingerprint: String!
+
+  """Nom de l'appareil"""
+  name: String!
+
+  """Plateforme"""
+  platform: String
+
+  """Navigateur"""
+  browser: String
+
+  """Adresse IP"""
+  ip: String
+
+  """Appareil actif"""
+  isActive: Boolean!
+
+  """Date de création"""
+  createdAt: String!
+
+  """Dernière utilisation"""
+  lastUsedAt: String!
+
+  """Date d'expiration"""
+  expiresAt: String
+}
+
+type DeviceTrustResultDto {
+  """Succès de l'opération"""
+  success: Boolean!
+
+  """ID de l'appareil"""
+  deviceId: String
+
+  """Appareil de confiance"""
+  trusted: Boolean!
+
+  """Date d'expiration"""
+  expiresAt: String
+
+  """MFA requis"""
+  mfaRequired: Boolean
+
+  """Message"""
+  message: String
+}
+
+type MagicLinkResultDto {
+  """Succès de la génération"""
+  success: Boolean!
+
+  """ID du lien"""
+  linkId: String
+
+  """Message de statut"""
+  message: String!
+
+  """Date d'expiration"""
+  expiresAt: String
+
+  """Email envoyé"""
+  emailSent: Boolean
+}
+
+type MagicLinkDto {
+  """ID du lien"""
+  id: ID!
+
+  """Email destinataire"""
+  email: String!
+
+  """ID utilisateur"""
+  userId: ID
+
+  """Statut du lien"""
+  status: String!
+
+  """Action du lien"""
+  action: String!
+
+  """Date de création"""
+  createdAt: String!
+
+  """Date d'expiration"""
+  expiresAt: String!
+
+  """Date d'utilisation"""
+  usedAt: String
+
+  """URL de redirection"""
+  redirectUrl: String
+}
+
+type MagicLinkVerificationResultDto {
+  """Succès de la vérification"""
+  success: Boolean!
+
+  """Statut du lien"""
+  status: String!
+
+  """Message"""
+  message: String
+
+  """Token d'accès"""
+  accessToken: String
+
+  """Token de rafraîchissement"""
+  refreshToken: String
+
+  """Type de token"""
+  tokenType: String
+
+  """Durée de validité"""
+  expiresIn: Float
+
+  """MFA requis"""
+  requiresMFA: Boolean
+
+  """Challenge MFA"""
+  mfaChallenge: MFAChallengeDto
+
+  """Informations utilisateur"""
+  userInfo: JSONObject
+}
+
+type PasswordlessAuthResultDto {
+  """Succès de l'initiation"""
+  success: Boolean!
+
+  """Méthode utilisée"""
+  method: String!
+
+  """ID du challenge"""
+  challengeId: String
+
+  """ID du lien magique"""
+  linkId: String
+
+  """Message de statut"""
+  message: String!
+
+  """Date d'expiration"""
+  expiresAt: String
+
+  """Destination masquée"""
+  maskedDestination: String
+}
+
+type BackupCodesGenerationDto {
+  """ID utilisateur"""
+  userId: ID!
+
+  """Codes de récupération"""
+  codes: [String!]!
+
+  """Date de génération"""
+  generatedAt: String!
+
+  """Codes restants"""
+  remainingCodes: Float!
+
+  """Message important"""
+  message: String
+}
+
+type RecoveryOptionsDto {
+  """Possède des codes de récupération"""
+  hasBackupCodes: Boolean!
+
+  """Codes de récupération restants"""
+  backupCodesRemaining: Float!
+
+  """Email de récupération configuré"""
+  hasRecoveryEmail: Boolean!
+
+  """Téléphone de récupération configuré"""
+  hasRecoveryPhone: Boolean!
+
+  """Méthodes de récupération disponibles"""
+  recoveryMethods: [String!]!
+}
+
+type LoginWithMFAResultDto {
+  """Succès de la connexion"""
+  success: Boolean!
+
+  """Token d'accès"""
+  accessToken: String
+
+  """Token de rafraîchissement"""
+  refreshToken: String
+
+  """Type de token"""
+  tokenType: String
+
+  """Durée de validité"""
+  expiresIn: Float
+
+  """Scope"""
+  scope: String
+
+  """ID de session"""
+  sessionId: String
+
+  """MFA requis"""
+  requiresMFA: Boolean
+
+  """Challenge MFA"""
+  mfaChallenge: MFAChallengeDto
+
+  """Appareil de confiance"""
+  trustedDevice: Boolean
+
+  """Message"""
+  message: String
+}
+
+type MFAAuditLogDto {
+  """ID du log"""
+  id: ID!
+
+  """ID utilisateur"""
+  userId: ID!
+
+  """ID de session"""
+  sessionId: String
+
+  """Action effectuée"""
+  action: String!
+
+  """Type de méthode"""
+  methodType: String
+
+  """ID de méthode"""
+  methodId: String
+
+  """Succès de l'action"""
+  success: Boolean!
+
+  """Timestamp"""
+  timestamp: String!
+
+  """Adresse IP"""
+  ip: String
+
+  """User Agent"""
+  userAgent: String
+
+  """Détails"""
+  details: JSONObject
+
+  """ID de corrélation"""
+  correlationId: String
+}
+
+type UserRegistrationResponseDto {
+  """Succès de l'enregistrement"""
+  success: Boolean!
+
+  """ID de l'utilisateur créé"""
+  userId: String
+
+  """Message de statut"""
+  message: String!
+
+  """Liste des erreurs"""
+  errors: [String!]
+
+  """Token de vérification d'email"""
+  verificationToken: String
+
+  """Email de vérification envoyé"""
+  verificationEmailSent: Boolean
+}
+
+type EmailVerificationResponseDto {
+  """Succès de la vérification"""
+  success: Boolean!
+
+  """Message de statut"""
+  message: String!
+
+  """Code d'erreur"""
+  errorCode: String
+}
+
+type PasswordResetResponseDto {
+  """Email de reset envoyé"""
+  success: Boolean!
+
+  """Message de statut"""
+  message: String!
+
+  """ID de la demande"""
+  requestId: String
+}
+
+type PasswordChangeResponseDto {
+  """Succès du changement"""
+  success: Boolean!
+
+  """Message de statut"""
+  message: String!
+
+  """Nécessite une reconnexion"""
+  requiresReauth: Boolean
+}
+
+type LoginResponseDto {
+  """Token d'accès JWT"""
+  accessToken: String!
+
+  """Token de rafraîchissement"""
+  refreshToken: String
+
+  """Type de token (Bearer)"""
+  tokenType: String!
+
+  """Durée de validité en secondes"""
+  expiresIn: Int
+
+  """Scope du token"""
+  scope: String
+
+  """ID de session"""
+  sessionId: String
+}
+
+type TokenValidationDto {
+  """Indique si le token est valide"""
+  valid: Boolean!
+
+  """ID utilisateur"""
+  userId: String
+
+  """Email de l'utilisateur"""
+  email: String
+
+  """Prénom"""
+  givenName: String
+
+  """Nom de famille"""
+  familyName: String
+
+  """Rôles de l'utilisateur"""
+  roles: [String!]
+
+  """Date d'expiration"""
+  expiresAt: String
+
+  """Date d'émission"""
+  issuedAt: String
+
+  """ID client"""
+  clientId: String
+
+  """Portées"""
+  scope: [String!]
+}
+
+type UserAttributesDto {
+  """Département"""
+  department: String
+
+  """Niveau d'habilitation"""
+  clearanceLevel: Float
+
+  """Date d'expiration du contrat"""
+  contractExpiryDate: String
+
+  """ID du manager"""
+  managerId: String
+
+  """Titre du poste"""
+  jobTitle: String
+
+  """Unité d'affaires"""
+  businessUnit: String
+
+  """Lieu de travail"""
+  workLocation: String
+
+  """Type d'emploi"""
+  employmentType: String
+
+  """Statut de vérification"""
+  verificationStatus: String
+
+  """Score de risque"""
+  riskScore: Float
+
+  """Prénom"""
+  firstName: String
+
+  """Nom de famille"""
+  lastName: String
+
+  """Numéro de téléphone"""
+  phoneNumber: String
+
+  """Nationalité"""
+  nationality: String
+
+  """Date de naissance"""
+  dateOfBirth: String
+
+  """Genre"""
+  gender: String
+
+  """Attributs supplémentaires"""
+  additionalAttributes: JSONObject
+}
+
+type UserInfoDto {
+  """Identifiant utilisateur (sub)"""
+  sub: String!
+
+  """Email"""
+  email: String
+
+  """Prénom"""
+  given_name: String
+
+  """Nom de famille"""
+  family_name: String
+
+  """Nom d'utilisateur préféré"""
+  preferred_username: String
+
+  """Rôles de l'utilisateur"""
+  roles: [String!]!
+
+  """IDs des organisations"""
+  organization_ids: [String!]
+
+  """État de l'utilisateur"""
+  state: String
+
+  """Attributs utilisateur"""
+  attributes: UserAttributesDto
+
+  """Accès aux ressources par client"""
+  resource_access: JSONObject
+
+  """Accès au realm"""
+  realm_access: JSONObject
+
+  """Date de création"""
+  created_at: String
+
+  """Date de mise à jour"""
+  updated_at: String
+
+  """Email vérifié"""
+  email_verified: Boolean
+}
+
+type EnrichedTokenValidationDto {
+  """Indique si le token est valide"""
+  valid: Boolean!
+
+  """Informations utilisateur complètes"""
+  userInfo: UserInfoDto
+
+  """ID utilisateur"""
+  userId: String
+
+  """Email"""
+  email: String
+
+  """Prénom"""
+  givenName: String
+
+  """Nom de famille"""
+  familyName: String
+
+  """Rôles"""
+  roles: [String!]
+
+  """Données brutes Keycloak"""
+  rawKeycloakData: JSONObject
+}
+
+type ConnectionTestDto {
+  """Indique si la connexion est établie"""
+  connected: Boolean!
+
+  """Informations sur la connexion"""
+  info: String
+
+  """Message d'erreur"""
+  error: String
+
+  """Latence en millisecondes"""
+  latency: Float
+
+  """Détails supplémentaires"""
+  details: JSONObject
+
+  """Timestamp"""
+  timestamp: String
+
+  """Version du service"""
+  version: String
+}
+
+type AuthenticationLogDto {
+  """ID utilisateur"""
+  userId: String!
+
+  """Action effectuée"""
+  action: String!
+
+  """Succès de l'action"""
+  success: Boolean!
+
+  """Timestamp"""
+  timestamp: String!
+
+  """Adresse IP"""
+  ip: String
+
+  """User Agent"""
+  userAgent: String
+
+  """Message d'erreur"""
+  error: String
+
+  """Détails supplémentaires"""
+  details: JSONObject
+
+  """Durée de l'opération"""
+  duration: Float
+
+  """Nom d'utilisateur"""
+  username: String
+}
+
+type PasswordValidationDto {
+  valid: Boolean!
+  score: Float!
+  errors: [String!]!
+  suggestions: [String!]!
+}
+
+type UsernameValidationDto {
+  valid: Boolean!
+  available: Boolean!
+  errors: [String!]!
+  suggestions: [String!]!
+}
+
+type EmailValidationDto {
+  valid: Boolean!
+  available: Boolean!
+  deliverable: Boolean!
+  errors: [String!]!
+}
+
+type PasswordPolicyDto {
+  minLength: Float!
+  requireUppercase: Boolean!
+  requireLowercase: Boolean!
+  requireNumbers: Boolean!
+  requireSpecialChars: Boolean!
+  forbiddenPatterns: [String!]!
+}
+
+type Query {
+  checkAccess(input: AuthorizationRequestInput!): AuthorizationResponseDto!
+  getAuthorizationHistory(userId: String, resourceId: String, limit: Float = 100, offset: Float = 0): [AuthorizationLogDto!]!
+  validateToken(token: String!): TokenValidationDto!
+  validateTokenEnriched(token: String!): EnrichedTokenValidationDto!
+  getUserInfo(userId: String!): UserInfoDto
+  getUserRoles(userId: String!): [String!]!
+  validatePassword(password: String!): PasswordValidationDto!
+  validateUsername(username: String!): UsernameValidationDto!
+  validateEmail(email: String!): EmailValidationDto!
+  generateUsernameSuggestions(email: String!, firstName: String, lastName: String): [String!]!
+  getPasswordPolicy: PasswordPolicyDto!
+  isRegistrationEnabled: Boolean!
+  testRedisConnection: ConnectionTestDto!
+  testKeycloakConnection: ConnectionTestDto!
+  testOPAConnection: ConnectionTestDto!
+  getAuthenticationHistory(userId: String, limit: Float = 100, offset: Float = 0): [AuthenticationLogDto!]!
+  isUserOnline(userId: String!): Boolean!
+  getAuthenticationStats: ConnectionTestDto!
+  checkPermission(token: String!, resourceId: String!, resourceType: String!, action: String!, context: JSONObject): Boolean!
+  getUserMFAMethods(userId: String!): [MFAMethodDto!]!
+  getRecoveryOptions(userId: String!): RecoveryOptionsDto!
+  getTrustedDevices(userId: String!): [TrustedDeviceDto!]!
+  isDeviceTrusted(userId: String!, deviceFingerprint: String!): Boolean!
+}
+
+input AuthorizationRequestInput {
+  """Informations sur l'utilisateur"""
+  user: UserInput!
+
+  """Informations sur la ressource"""
+  resource: ResourceInput!
+
+  """Action demandée"""
+  action: String!
+
+  """Contexte de la demande"""
+  context: ContextInput
+}
+
+input UserInput {
+  """Identifiant de l'utilisateur"""
+  id: ID!
+
+  """Rôles de l'utilisateur"""
+  roles: [String!]!
+
+  """IDs des organisations de l'utilisateur"""
+  organization_ids: [String!]
+
+  """État de l'utilisateur"""
+  state: String
+
+  """Attributs de l'utilisateur"""
+  attributes: UserAttributesInput
+}
+
+input UserAttributesInput {
+  """Département de l'utilisateur"""
+  department: String
+
+  """Niveau d'habilitation"""
+  clearanceLevel: Float
+
+  """Date d'expiration du contrat"""
+  contractExpiryDate: String
+
+  """ID du manager"""
+  managerId: String
+
+  """Attributs supplémentaires"""
+  additionalAttributes: JSONObject
+}
+
+input ResourceInput {
+  """Identifiant de la ressource"""
+  id: ID!
+
+  """Type de ressource"""
+  type: String!
+
+  """Identifiant du propriétaire"""
+  owner_id: String
+
+  """Identifiant de l'organisation"""
+  organization_id: String
+
+  """Attributs de la ressource"""
+  attributes: ResourceAttributesInput
+}
+
+input ResourceAttributesInput {
+  """Indique si la ressource est officielle"""
+  isOfficial: Boolean
+
+  """Département associé à la ressource"""
+  department: String
+
+  """Indique si la ressource est confidentielle"""
+  confidential: Boolean
+
+  """Niveau d'habilitation requis"""
+  requiredClearance: Float
+
+  """État actuel de la ressource"""
+  state: String
+
+  """État cible de la ressource"""
+  targetState: String
+
+  """Attributs supplémentaires"""
+  additionalAttributes: JSONObject
+}
+
+input ContextInput {
+  """Adresse IP"""
+  ip: String
+
+  """Indique si la demande est effectuée pendant les heures de travail"""
+  businessHours: Boolean
+
+  """Date courante"""
+  currentDate: String
+
+  """Score de risque"""
+  riskScore: Float
+
+  """Structure hiérarchique de management"""
+  managementHierarchy: JSONObject
+
+  """Informations contextuelles supplémentaires"""
+  additionalContext: JSONObject
+}
+
+type Mutation {
+  login(input: LoginInputDto!): LoginResponseDto!
+  refreshToken(input: RefreshTokenInputDto!): LoginResponseDto!
+  getClientCredentialsToken: LoginResponseDto!
+  logout(token: String!): Boolean!
+  invalidateUserCache(userId: String!): Boolean!
+  registerUser(input: UserRegistrationInputDto!): UserRegistrationResponseDto!
+  verifyEmail(input: VerifyEmailInputDto!): EmailVerificationResponseDto!
+  resendVerificationEmail(input: ResendVerificationInputDto!): EmailVerificationResponseDto!
+  requestPasswordReset(input: ResetPasswordInputDto!): PasswordResetResponseDto!
+  changePassword(input: ChangePasswordInputDto!): PasswordChangeResponseDto!
+  setupMFA(input: MFASetupInputDto!): MFASetupResultDto!
+  verifyMFASetup(methodId: String!, code: String!): MFAVerificationResultDto!
+  loginWithMFA(username: String!, password: String!, deviceFingerprint: String): LoginWithMFAResultDto!
+  verifyMFA(input: MFAVerificationInputDto!): MFAVerificationResultDto!
+  removeMFAMethod(methodId: String!): Boolean!
+  generateBackupCodes(userId: String!): BackupCodesGenerationDto!
+  trustDevice(input: DeviceTrustWithUserInputDto!): DeviceTrustResultDto!
+  revokeTrustedDevice(deviceId: String!): Boolean!
+  generateMagicLink(input: MagicLinkRequestDto!): MagicLinkResultDto!
+  verifyMagicLink(token: String!): MagicLinkVerificationResultDto!
+  initiatePasswordlessAuth(input: PasswordlessAuthInputDto!): PasswordlessAuthResultDto!
+  loginWithOptions(input: LoginWithOptionsInputDto!): LoginWithMFAResultDto!
+}
+
+input LoginInputDto {
+  username: String!
+  password: String!
+}
+
+input RefreshTokenInputDto {
+  refreshToken: String!
+}
+
+input UserRegistrationInputDto {
+  """Nom d'utilisateur unique"""
+  username: String!
+
+  """Adresse email"""
+  email: String!
+
+  """Mot de passe"""
+  password: String!
+
+  """Prénom"""
+  firstName: String
+
+  """Nom de famille"""
+  lastName: String
+
+  """Compte activé"""
+  enabled: Boolean = true
+
+  """Email vérifié"""
+  emailVerified: Boolean = false
+
+  """Attributs personnalisés"""
+  attributes: JSONObject
+}
+
+input VerifyEmailInputDto {
+  """ID de l'utilisateur"""
+  userId: String!
+
+  """Token de vérification"""
+  token: String!
+}
+
+input ResendVerificationInputDto {
+  """ID de l'utilisateur"""
+  userId: String!
+}
+
+input ResetPasswordInputDto {
+  """Adresse email"""
+  email: String!
+}
+
+input ChangePasswordInputDto {
+  """ID de l'utilisateur"""
+  userId: String!
+
+  """Ancien mot de passe"""
+  oldPassword: String!
+
+  """Nouveau mot de passe"""
+  newPassword: String!
+}
+
+input MFASetupInputDto {
+  """ID de l'utilisateur"""
+  userId: ID!
+
+  """Type de méthode"""
+  methodType: String!
+
+  """Nom de la méthode"""
+  name: String!
+
+  """Numéro de téléphone (pour SMS)"""
+  phoneNumber: String
+
+  """Adresse email (pour email MFA)"""
+  emailAddress: String
+
+  """Informations de l'appareil"""
+  deviceInfo: DeviceInfoInputDto
+}
+
+input DeviceInfoInputDto {
+  """User Agent du navigateur"""
+  userAgent: String!
+
+  """Adresse IP"""
+  ip: String!
+
+  """Empreinte unique de l'appareil"""
+  fingerprint: String!
+
+  """Nom de l'appareil"""
+  name: String
+
+  """Plateforme (Windows, macOS, etc.)"""
+  platform: String
+}
+
+input MFAVerificationInputDto {
+  """ID du challenge MFA"""
+  challengeId: String!
+
+  """Code de vérification"""
+  code: String!
+
+  """Empreinte de l'appareil"""
+  deviceFingerprint: String
+
+  """Se souvenir de cet appareil"""
+  rememberDevice: Boolean = false
+
+  """Métadonnées supplémentaires"""
+  metadata: JSONObject
+}
+
+input DeviceTrustWithUserInputDto {
+  """Empreinte unique de l'appareil"""
+  deviceFingerprint: String!
+
+  """Nom de l'appareil"""
+  deviceName: String
+
+  """Durée de confiance en jours"""
+  trustDurationDays: Float = 30
+
+  """Nécessite confirmation MFA"""
+  requireMFAConfirmation: Boolean = false
+
+  """ID de l'utilisateur"""
+  userId: ID!
+}
+
+input MagicLinkRequestDto {
+  """Adresse email"""
+  email: String!
+
+  """URL de redirection après connexion"""
+  redirectUrl: String
+
+  """Contexte de la demande"""
+  context: MagicLinkContextInputDto
+
+  """Métadonnées supplémentaires"""
+  metadata: JSONObject
+}
+
+input MagicLinkContextInputDto {
+  """Adresse IP"""
+  ip: String
+
+  """User Agent"""
+  userAgent: String
+
+  """Empreinte de l'appareil"""
+  deviceFingerprint: String
+
+  """URL de référence"""
+  referrer: String
+
+  """Action à effectuer"""
+  action: String = "login"
+}
+
+input PasswordlessAuthInputDto {
+  """Identifiant (email ou téléphone)"""
+  identifier: String!
+
+  """Méthode d'authentification"""
+  method: String!
+
+  """Action à effectuer"""
+  action: String = "login"
+
+  """URL de redirection"""
+  redirectUrl: String
+
+  """Contexte de la demande"""
+  context: PasswordlessContextInputDto
+}
+
+input PasswordlessContextInputDto {
+  """Adresse IP"""
+  ip: String
+
+  """User Agent"""
+  userAgent: String
+
+  """Empreinte de l'appareil"""
+  deviceFingerprint: String
+}
+
+input LoginWithOptionsInputDto {
+  """Nom d'utilisateur"""
+  username: String
+
+  """Mot de passe"""
+  password: String
+
+  """Token Magic Link"""
+  magicLinkToken: String
+
+  """Code MFA"""
+  mfaCode: String
+
+  """Empreinte de l'appareil"""
+  deviceFingerprint: String
+
+  """Se souvenir de l'appareil"""
+  rememberDevice: Boolean = false
+}

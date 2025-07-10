@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package authorization;
+
+service AuthorizationService {
+  // Vérifie si une action est autorisée
+  rpc CheckAccess(AuthorizationRequest) returns (AuthorizationResponse);
+  
+  // Valide un token et récupère les infos utilisateur
+  rpc ValidateToken(ValidateTokenRequest) returns (UserInfoResponse);
+  
+  // Récupère les informations d'un utilisateur par ID
+  rpc GetUserInfo(GetUserInfoRequest) returns (UserInfoResponse);
+  
+  // Récupère les rôles d'un utilisateur
+  rpc GetUserRoles(GetUserRolesRequest) returns (UserRolesResponse);
+  
+  // Invalide le cache pour un utilisateur
+  rpc InvalidateUserCache(InvalidateUserCacheRequest) returns (InvalidateResponse);
+}
+
+message AuthorizationRequest {
+  string userId = 1;
+  map<string, string> userAttributes = 2;
+
+  string resourceType = 3;
+  string resourceId = 4;
+  map<string, string> resourceAttributes = 5;
+
+  string action = 6;
+  map<string, string> context = 7;
+}
+
+message AuthorizationResponse {
+  bool allowed = 1;
+  string reason = 2;
+}
+
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message GetUserInfoRequest {
+  string userId = 1;
+}
+
+message GetUserRolesRequest {
+  string userId = 1;
+}
+
+message UserInfoResponse {
+  string userId = 1;
+  string email = 2;
+  string givenName = 3;
+  string familyName = 4;
+  repeated string roles = 5;
+  map<string, string> attributes = 6;
+  repeated string organizationIds = 7;
+}
+
+message UserRolesResponse {
+  repeated string roles = 1;
+}
+
+message InvalidateUserCacheRequest {
+  string userId = 1;
+}
+
+message InvalidateResponse {
+  bool success = 1;
+  string message = 2;
+}

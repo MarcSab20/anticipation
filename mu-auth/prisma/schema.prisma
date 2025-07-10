@@ -1,0 +1,259 @@
+// prisma/schema.prisma - Schema complet pour la synchronisation Keycloak
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_DATABASE_URL")
+}
+
+// ============================================================================
+// MODÈLES UTILISATEURS ET SYNCHRONISATION
+// ============================================================================
+
+model User {
+  id                    String    @id @default(uuid())
+  keycloakId            String?   @unique @map("keycloak_id") // ID Keycloak pour la synchronisation
+  username              String    @unique
+  email                 String    @unique
+  emailVerified         Boolean   @default(false) @map("email_verified")
+  firstName             String?   @map("first_name")
+  lastName              String?   @map("last_name")
+  enabled               Boolean   @default(true)
+  
+  // Données métier
+  department            String?
+  clearanceLevel        Int       @default(1) @map("clearance_level")
+  contractExpiryDate    DateTime? @map("contract_expiry_date")
+  managerId             String?   @map("manager_id")
+  jobTitle              String?   @map("job_title")
+  businessUnit          String?   @map("business_unit")
+  territorialJurisdiction String? @map("territorial_jurisdiction")
+  technicalExpertise    String[]  @map("technical_expertise")
+  hierarchyLevel        Int       @default(1) @map("hierarchy_level")
+  workLocation          String?   @map("work_location")
+  employmentType        String    @default("PERMANENT") @map("employment_type")
+  verificationStatus    String    @default("PENDING") @map("verification_status")
+  riskScore             Float     @default(0) @map("risk_score")
+  certifications        String[]  @default([])
+  phoneNumber           String?   @map("phone_number")
+  nationality           String?
+  dateOfBirth           DateTime? @map("date_of_birth")
+  gender                String?
+  state                 String    @default("ACTIVE")
+  
+  // Métadonnées
+  createdTimestamp      DateTime  @default(now()) @map("created_timestamp")
+  updatedTimestamp      DateTime  @updatedAt @map("updated_timestamp")
+  lastLogin             DateTime? @map("last_login")
+  failedLoginAttempts   Int       @default(0) @map("failed_login_attempts")
+  lockedUntil           DateTime? @map("locked_until")
+  
+  // Attributs personnalisés au format JSON
+  customAttributes      Json?     @map("custom_attributes")
+  
+  // Relations
+  roles                 UserRole[]
+  organizations         UserOrganization[]
+  attributes            UserAttribute[]
+  sessions              UserSession[]
+  authLogs              AuthorizationLog[]
+  syncLogs              SyncLog[]
+  
+  // Index pour les recherches
+  @@index([username])
+  @@index([email])
+  @@index([keycloakId])
+  @@index([department])
+  @@index([state])
+  @@index([verificationStatus])
+  @@map("users")
+}
+
+model Role {
+  id          String     @id @default(uuid())
+  name        String     @unique
+  description String?
+  keycloakId  String?    @unique @map("keycloak_id")
+  
+  users       UserRole[]
+  
+  @@map("roles")
+}
+
+model UserRole {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  roleId     String   @map("role_id")
+  assignedBy String?  @map("assigned_by")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model Organization {
+  id          String             @id @default(uuid())
+  name        String             @unique
+  description String?
+  keycloakId  String?            @unique @map("keycloak_id")
+  
+  users       UserOrganization[]
+  
+  @@map("organizations")
+}
+
+model UserOrganization {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  organizationId String   @map("organization_id")
+  assignedAt     DateTime @default(now()) @map("assigned_at")
+  
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, organizationId])
+  @@map("user_organizations")
+}
+
+model UserAttribute {
+  id            String @id @default(uuid())
+  userId        String @map("user_id")
+  attributeName String @map("attribute_name")
+  attributeValue String @map("attribute_value")
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, attributeName])
+  @@map("user_attributes")
+}
+
+// ============================================================================
+// GESTION DES SESSIONS
+// ============================================================================
+
+model UserSession {
+  id           String    @id @default(uuid())
+  sessionId    String    @unique @map("session_id")
+  userId       String    @map("user_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  lastActivity DateTime  @default(now()) @map("last_activity")
+  expiresAt    DateTime? @map("expires_at")
+  active       Boolean   @default(true)
+  loginMethod  String?   @map("login_method")
+  ip           String?
+  userAgent    String?   @map("user_agent")
+  metadata     Json?
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([sessionId])
+  @@index([active])
+  @@map("user_sessions")
+}
+
+// ============================================================================
+// JOURNALISATION ET SYNCHRONISATION
+// ============================================================================
+
+model AuthorizationLog {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  resourceId    String   @map("resource_id")
+  resourceType  String   @map("resource_type")
+  action        String
+  allowed       Boolean
+  reason        String?
+  context       Json?
+  timestamp     DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([resourceId])
+  @@index([timestamp])
+  @@map("authorization_logs")
+}
+
+model SyncLog {
+  id            String          @id @default(uuid())
+  userId        String?         @map("user_id")
+  syncType      SyncType        @map("sync_type")
+  direction     SyncDirection
+  status        SyncStatus
+  startedAt     DateTime        @default(now()) @map("started_at")
+  completedAt   DateTime?       @map("completed_at")
+  errorMessage  String?         @map("error_message")
+  recordsCount  Int             @default(0) @map("records_count")
+  changes       Json?           // Détails des changements
+  metadata      Json?
+  
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  @@index([syncType])
+  @@index([status])
+  @@index([startedAt])
+  @@map("sync_logs")
+}
+
+model SyncMapping {
+  id                String   @id @default(uuid())
+  keycloakUserId    String   @unique @map("keycloak_user_id")
+  postgresUserId    String   @unique @map("postgres_user_id")
+  lastSyncAt        DateTime @default(now()) @map("last_sync_at")
+  keycloakUpdatedAt DateTime @map("keycloak_updated_at")
+  postgresUpdatedAt DateTime @map("postgres_updated_at")
+  syncHash          String   @map("sync_hash") // Hash pour détecter les changements
+  
+  @@map("sync_mappings")
+}
+
+model SyncConfiguration {
+  id                    String   @id @default(uuid())
+  key                   String   @unique
+  value                 String
+  description           String?
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  
+  @@map("sync_configurations")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum SyncType {
+  FULL_SYNC
+  INCREMENTAL_SYNC
+  USER_SYNC
+  ROLE_SYNC
+  ORGANIZATION_SYNC
+  MANUAL_SYNC
+}
+
+enum SyncDirection {
+  KEYCLOAK_TO_POSTGRES
+  POSTGRES_TO_KEYCLOAK
+  BIDIRECTIONAL
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// ============================================================================
+// VUES POUR LES REQUÊTES COMPLEXES
+// ============================================================================
+
+// Note: Les vues seront créées via des migrations personnalisées
+// car Prisma ne supporte pas encore la création de vues dans le schema

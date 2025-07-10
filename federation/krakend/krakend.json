@@ -1,0 +1,319 @@
+{
+  "version": 3,
+  "name": "KrakenD API Gateway - Host Services",
+  "timeout": "30s",
+  "cache_ttl": "300s",
+  "output_encoding": "json",
+  "port": 8090,
+  "debug_endpoint": true,
+  "extra_config": {
+    "security/cors": {
+      "allow_origins": ["*"],
+      "allow_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      "allow_headers": [
+        "Origin", 
+        "Authorization", 
+        "Content-Type", 
+        "X-User-ID", 
+        "X-Request-ID",
+        "X-Trace-ID",
+        "X-Correlation-ID",
+        "Apollo-Require-Preflight"
+      ],
+      "expose_headers": ["Content-Length", "X-Request-ID", "X-Trace-ID"],
+      "max_age": "12h"
+    },
+    "telemetry/logging": {
+      "level": "DEBUG",
+      "prefix": "[KRAKEND-HOST]",
+      "syslog": false,
+      "stdout": true,
+      "format": "default"
+    }
+  },
+  "endpoints": [
+    {
+      "endpoint": "/api/auth/sign-up",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-frontend"
+          }
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/register",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/sign-in",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-frontend"
+          }
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/login",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/refresh",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "Authorization",
+        "X-Request-ID",
+        "X-Trace-ID"
+      ],
+      "extra_config": {
+        "qos/ratelimit/router": {
+          "max_rate": 50,
+          "capacity": 50,
+          "client_max_rate": 10,
+          "client_capacity": 10,
+          "strategy": "ip"
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/refresh",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/logout",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Authorization",
+        "X-Request-ID",
+        "X-Trace-ID"
+      ],
+      "backend": [
+        {
+          "url_pattern": "/auth/logout",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://172.17.0.13001"],
+          "disable_host_sanitize": true
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/forgot-password",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID",
+        "X-Correlation-ID"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-frontend"
+          }
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 5,
+          "capacity": 5,
+          "client_max_rate": 2,
+          "client_capacity": 2,
+          "strategy": "ip"
+        },
+        "validation/json-schema": {
+          "type": "object",
+          "properties": {
+            "email": {"type": "string", "format": "email"}
+          },
+          "required": ["email"]
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/request-password-reset",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            },
+            "modifier/martian": {
+              "header.Modifier": {
+                "scope": ["request"],
+                "name": "X-Frontend-Password-Reset",
+                "value": "true"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/graphql-public",
+      "method": "POST",
+      "output_encoding": "no-op",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID",
+        "Apollo-Require-Preflight"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-public"
+          }
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/graphql",
+          "encoding": "no-op",
+          "method": "POST",
+          "host": ["http://172.17.0.1:4000"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/graphql",
+      "method": "POST",
+      "output_encoding": "no-op",
+      "input_headers": [
+        "Content-Type", 
+        "Authorization", 
+        "X-User-ID", 
+        "X-Request-ID",
+        "X-Trace-ID",
+        "Apollo-Require-Preflight"
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "RS256",
+          "jwk_url": "http://172.17.0.1:8080/realms/mu-realm/protocol/openid-connect/certs",
+          "cache": true,
+          "cache_duration": 900,
+          "audience": ["api-gateway", "microservices"],
+          "issuer": "http://172.17.0.1:8080/realms/mu-realm",
+          "roles_key": "realm_access.roles",
+          "roles_key_is_nested": true,
+          "propagate_claims": [
+            ["sub", "X-User-ID"],
+            ["email", "X-User-Email"], 
+            ["realm_access.roles", "X-User-Roles"],
+            ["preferred_username", "X-Username"]
+          ]
+        },
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-authenticated"
+          }
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/graphql",
+          "encoding": "no-op",
+          "method": "POST",
+          "host": ["http://172.17.0.1:4000"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/health",
+      "method": "GET",
+      "output_encoding": "json",
+      "backend": [
+        {
+          "url_pattern": "/health",
+          "host": ["http://172.17.0.1:4000"],
+          "timeout": "8000ms",
+          "mapping": {
+            "status": "apollo_status"
+          }
+        },
+        {
+          "url_pattern": "/auth/health",
+          "host": ["http://172.17.0.1:3001"],
+          "timeout": "8000ms",
+          "mapping": {
+            "status": "auth_status"
+          }
+        }
+      ],
+      "extra_config": {
+        "modifier/response-body-generator": {
+          "template": "{\"status\": \"OK\", \"service\": \"krakend-host-gateway\", \"timestamp\": \"{{.now.Unix}}\", \"apollo_status\": \"{{.resp0_apollo_status}}\", \"auth_status\": \"{{.resp1_auth_status}}\"}"
+        }
+      }
+    }
+  ]
+}
