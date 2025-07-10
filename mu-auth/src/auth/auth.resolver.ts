@@ -129,15 +129,7 @@ export class AuthResolver {
    * Invalider le cache utilisateur
    */
   @Mutation(() => Boolean)
-  async invalidateUserCache(@Args('userId') userId: string): Promise<boolean> {
-    try {
-      await this.authService.invalidateUserCache(userId);
-      return true;
-    } catch (error) {
-      return false;
-    }
-  }
-
+ 
   /**
    * Enregistrement d'un nouvel utilisateur
    */

@@ -19,8 +19,6 @@ import {
   RedisSerializer
 } from '../interface/redis.interface.js';
 
-import { ValidationResult } from '../interface/common.js';
-
 export class RedisClientImpl implements RedisClient {
   private readonly config: RedisConfig;
   private client: RedisClientType;

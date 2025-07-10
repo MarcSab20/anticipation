@@ -10,7 +10,6 @@ import {
   TokenValidationResult,
   ValidationResult,
   UserInfo,
-  ConnectionTestResult,
   AuthEvent,
   AuthEventType,
   EventCallback,
@@ -21,7 +20,6 @@ import {
 import { 
   createExtendedAuthService,
   ExtendedAuthService,
-  ExtendedAuthConfig,
   ExtendedAuthOptions,
   LoginWithMFAResult,
   AuthenticationFlow
@@ -70,10 +68,6 @@ import {
   UserManagementEventType
 } from './dto/user-registration.dto';
 
-/**
- * Service d'authentification NestJS qui encapsule smp-auth-ts
- * Version avec debugging amélioré et gestion d'erreurs robuste
- */
 @Injectable()
 export class AuthService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AuthService.name);
@@ -114,29 +108,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
           password: this.configService.get<string>('REDIS_PASSWORD'),
           db: parseInt(this.configService.get<string>('REDIS_DB', '0')),
           prefix: this.configService.get<string>('REDIS_PREFIX', 'mu:auth:')
-        },
-        mfa: {
-          enabled: this.configService.get<boolean>('MFA_ENABLED', true),
-          enforcedForRoles: this.configService.get<string>('MFA_ENFORCED_ROLES', 'admin,super_admin').split(','),
-          gracePeriodDays: parseInt(this.configService.get<string>('MFA_GRACE_PERIOD_DAYS', '7')),
-          maxAttempts: parseInt(this.configService.get<string>('MFA_MAX_ATTEMPTS', '3')),
-          codeLength: parseInt(this.configService.get<string>('MFA_CODE_LENGTH', '6')),
-          codeExpiry: parseInt(this.configService.get<string>('MFA_CODE_EXPIRY', '300')),
-          allowedMethods: this.configService.get<string>('MFA_ALLOWED_METHODS', 'totp,sms,email,backup_codes')
-            .split(',')
-            .map(method => method.trim()) as MFAMethodType[],
-          requireBackupCodes: this.configService.get<boolean>('MFA_REQUIRE_BACKUP_CODES', true),
-          rememberDeviceDays: parseInt(this.configService.get<string>('MFA_REMEMBER_DEVICE_DAYS', '30'))
-        },
-        magicLink: {
-          enabled: this.configService.get<boolean>('MAGIC_LINK_ENABLED', true),
-          tokenLength: parseInt(this.configService.get<string>('MAGIC_LINK_TOKEN_LENGTH', '32')),
-          expiryMinutes: parseInt(this.configService.get<string>('MAGIC_LINK_EXPIRY_MINUTES', '30')),
-          maxUsesPerDay: parseInt(this.configService.get<string>('MAGIC_LINK_MAX_USES_PER_DAY', '10')),
-          requireExistingUser: this.configService.get<boolean>('MAGIC_LINK_REQUIRE_EXISTING_USER', false),
-          autoCreateUser: this.configService.get<boolean>('MAGIC_LINK_AUTO_CREATE_USER', true),
-          redirectUrl: this.configService.get<string>('MAGIC_LINK_REDIRECT_URL', '/auth/success'),
-          emailTemplate: this.configService.get<string>('MAGIC_LINK_EMAIL_TEMPLATE', 'magic-link')
         }
       };
 
@@ -157,7 +128,35 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
         }
       };
 
-      this.extendedAuthService = createExtendedAuthService(authConfig, authOptions);
+      // Créer la configuration étendue avec les options MFA et Magic Link
+      const extendedConfig = {
+        ...authConfig,
+        mfa: {
+          enabled: this.configService.get<boolean>('MFA_ENABLED', true),
+          enforcedForRoles: this.configService.get<string>('MFA_ENFORCED_ROLES', 'admin,super_admin').split(','),
+          gracePeriodDays: parseInt(this.configService.get<string>('MFA_GRACE_PERIOD_DAYS', '7')),
+          maxAttempts: parseInt(this.configService.get<string>('MFA_MAX_ATTEMPTS', '3')),
+          codeLength: parseInt(this.configService.get<string>('MFA_CODE_LENGTH', '6')),
+          codeExpiry: parseInt(this.configService.get<string>('MFA_CODE_EXPIRY', '300')),
+          allowedMethods: this.configService.get<string>('MFA_ALLOWED_METHODS', 'totp,sms,email,backup_codes')
+            .split(',')
+            .map(method => method.trim()) as any[],
+          requireBackupCodes: this.configService.get<boolean>('MFA_REQUIRE_BACKUP_CODES', true),
+          rememberDeviceDays: parseInt(this.configService.get<string>('MFA_REMEMBER_DEVICE_DAYS', '30'))
+        },
+        magicLink: {
+          enabled: this.configService.get<boolean>('MAGIC_LINK_ENABLED', true),
+          tokenLength: parseInt(this.configService.get<string>('MAGIC_LINK_TOKEN_LENGTH', '32')),
+          expiryMinutes: parseInt(this.configService.get<string>('MAGIC_LINK_EXPIRY_MINUTES', '30')),
+          maxUsesPerDay: parseInt(this.configService.get<string>('MAGIC_LINK_MAX_USES_PER_DAY', '10')),
+          requireExistingUser: this.configService.get<boolean>('MAGIC_LINK_REQUIRE_EXISTING_USER', false),
+          autoCreateUser: this.configService.get<boolean>('MAGIC_LINK_AUTO_CREATE_USER', true),
+          redirectUrl: this.configService.get<string>('MAGIC_LINK_REDIRECT_URL', '/auth/success'),
+          emailTemplate: this.configService.get<string>('MAGIC_LINK_EMAIL_TEMPLATE', 'magic-link')
+        }
+      };
+
+      this.extendedAuthService = createExtendedAuthService(extendedConfig, authOptions);
       this.setupEventHandlers();
       this.isInitialized = true;
       
@@ -761,18 +760,6 @@ private generateCorrelationId(): string {
     }
   }
 
-  async invalidateUserCache(userId: string): Promise<void> {
-    this.ensureInitialized();
-    
-    try {
-      await this.extendedAuthService.invalidateUserCache(userId);
-      this.logger.debug(`✅ Cache invalidated for user: ${userId}`);
-      
-    } catch (error) {
-      this.logger.error(`❌ Cache invalidation failed for user ${userId}:`, error.message);
-    }
-  }
-
 
   // ============================================================================
   // MÉTHODES AVEC FALLBACK POSTGRESQL
@@ -915,7 +902,6 @@ private generateCorrelationId(): string {
       };
     }
   }
-
  
 
   // ============================================================================

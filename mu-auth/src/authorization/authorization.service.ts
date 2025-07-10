@@ -5,27 +5,20 @@ import { PrismaService } from '../common/prisma/prisma.service.js';
 import { 
   createOPAClient,
   createRedisClient,
-  OPAClientExtended, 
+  OPAClient, 
   OPAInput, 
   OPAResult,
-  RedisClientExtended,
-  AuthorizationLog,
+  RedisClient,
   LogFilter,
-  LogSearchResult,
   OPAConfig,
   RedisConfig,
-  ConnectionTestResult
 } from 'smp-auth-ts';
 
-/**
- * Service d'autorisation NestJS qui encapsule smp-auth-ts
- * Ajoute la persistance avec Prisma et les fonctionnalités métier spécifiques
- */
 @Injectable()
 export class AuthorizationService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AuthorizationService.name);
-  private opaClient: OPAClientExtended;
-  private redisClient: RedisClientExtended;
+  private opaClient: OPAClient;
+  private redisClient: RedisClient;
 
   constructor(
     private readonly configService: ConfigService,
@@ -53,7 +46,7 @@ export class AuthorizationService implements OnModuleInit, OnModuleDestroy {
     this.opaClient = createOPAClient(opaConfig);
     this.redisClient = createRedisClient(redisConfig);
 
-    await this.redisClient.connect();
+    //await this.redisClient.connect();
 
     this.logger.log('AuthorizationService initialized with smp-auth-ts');
   }
@@ -115,34 +108,6 @@ export class AuthorizationService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ============================================================================
-  // GESTION DES POLITIQUES (délégation vers OPA)
-  // ============================================================================
-
-  async updatePolicy(policyId: string, policyContent: string): Promise<void> {
-    return this.opaClient.updatePolicy(policyId, policyContent);
-  }
-
-  async getPolicy(policyId: string): Promise<string> {
-    return this.opaClient.getPolicy(policyId);
-  }
-
-  async createPolicy(policy: any): Promise<string> {
-    return this.opaClient.createPolicy(policy);
-  }
-
-  async deletePolicy(policyId: string): Promise<void> {
-    return this.opaClient.deletePolicy(policyId);
-  }
-
-  async listPolicies(filter?: any): Promise<any[]> {
-    return this.opaClient.listPolicies(filter);
-  }
-
-  async validatePolicy(content: string) {
-    return this.opaClient.validatePolicy(content);
-  }
-
-  // ============================================================================
   // JOURNALISATION ET HISTORIQUE
   // ============================================================================
 
@@ -180,49 +145,6 @@ export class AuthorizationService implements OnModuleInit, OnModuleDestroy {
       
       // Fallback vers Prisma si Redis échoue
       return this.getAuthorizationHistoryFromPrisma(userId, resourceId, limit, offset);
-    }
-  }
-
-  async invalidateUserCache(userId: string): Promise<void> {
-    try {
-      await this.redisClient.invalidateByPattern(`*:user:${userId}:*`);
-      this.logger.debug(`Cache invalidated for user ${userId}`);
-    } catch (error) {
-      this.logger.error(`Failed to invalidate user cache: ${error.message}`);
-    }
-  }
-
-  // ============================================================================
-  // TESTS DE CONNECTIVITÉ
-  // ============================================================================
-
-  async testOPAConnection(): Promise<ConnectionTestResult> {
-    try {
-      return await this.opaClient.testConnection();
-    } catch (error) {
-      return {
-        connected: false,
-        error: `OPA connection failed: ${error.message}`
-      };
-    }
-  }
-
-  async testRedisConnection(): Promise<ConnectionTestResult> {
-    try {
-      const start = Date.now();
-      const pong = await this.redisClient.ping();
-      const latency = Date.now() - start;
-      
-      return {
-        connected: true,
-        info: `Redis connection successful. Response: ${pong}`,
-        latency
-      };
-    } catch (error) {
-      return {
-        connected: false,
-        error: `Redis connection failed: ${error.message}`
-      };
     }
   }
 

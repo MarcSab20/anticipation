@@ -1,4 +1,44 @@
-import { MagicLinkFactoryConfig } from 'smp-auth-ts';
+
+export interface MagicLinkFactoryConfig {
+  magicLink?: {
+    enabled?: boolean;
+    tokenLength?: number;
+    expiryMinutes?: number;
+    maxUsesPerDay?: number;
+    requireExistingUser?: boolean;
+    autoCreateUser?: boolean;
+  };
+
+  email: {
+    provider: 'twilio';
+    twilio?: {
+      accountSid: string;
+      authToken: string;
+      fromPhoneNumber?: string;
+      fromEmail?: string;
+      fromName?: string;
+      useEmailApi?: boolean;
+      templates?: {
+        magicLink?: string;
+        welcome?: string;
+        passwordReset?: string;
+        mfaCode?: string;
+      };
+      sandbox?: boolean;
+    };
+  };
+
+  frontend?: {
+    baseUrl?: string;
+    magicLinkPath?: string;
+    redirectPaths?: {
+      login?: string;
+      register?: string;
+      resetPassword?: string;
+      verifyEmail?: string;
+    };
+  };
+}
 
 export interface MuAuthMagicLinkConfig {
   // Configuration Magic Link
@@ -9,18 +49,24 @@ export interface MuAuthMagicLinkConfig {
   requireExistingUser: boolean;
   autoCreateUser: boolean;
   
-  // Configuration SendGrid
-  sendGrid: {
-    apiKey: string;
-    fromEmail: string;
-    fromName: string;
-    templates: {
-      magicLink: string;
-      welcome: string;
-      passwordReset: string;
-      mfaCode: string;
+  // Configuration Email Provider
+  email: {
+    provider: 'twilio';
+    twilio: {
+      accountSid: string;
+      authToken: string;
+      fromPhoneNumber?: string;
+      fromEmail?: string;
+      fromName?: string;
+      useEmailApi?: boolean;
+      templates: {
+        magicLink: string;
+        welcome: string;
+        passwordReset: string;
+        mfaCode: string;
+      };
+      sandbox: boolean;
     };
-    sandbox: boolean;
   };
   
   // Configuration Frontend
@@ -45,17 +91,23 @@ export function loadMagicLinkConfig(): MuAuthMagicLinkConfig {
     requireExistingUser: process.env.MAGIC_LINK_REQUIRE_EXISTING_USER === 'true',
     autoCreateUser: process.env.MAGIC_LINK_AUTO_CREATE_USER !== 'false',
     
-    sendGrid: {
-      apiKey: process.env.SENDGRID_API_KEY || '',
-      fromEmail: process.env.FROM_EMAIL || 'noreply@smp-platform.com',
-      fromName: process.env.FROM_NAME || 'SMP Platform',
-      templates: {
-        magicLink: process.env.SENDGRID_TEMPLATE_MAGIC_LINK || '',
-        welcome: process.env.SENDGRID_TEMPLATE_WELCOME || '',
-        passwordReset: process.env.SENDGRID_TEMPLATE_PASSWORD_RESET || '',
-        mfaCode: process.env.SENDGRID_TEMPLATE_MFA_CODE || ''
-      },
-      sandbox: process.env.NODE_ENV !== 'production'
+    email: {
+      provider: 'twilio',
+      twilio: {
+        accountSid: process.env.TWILIO_ACCOUNT_SID || '',
+        authToken: process.env.TWILIO_AUTH_TOKEN || '',
+        fromPhoneNumber: process.env.TWILIO_FROM_PHONE,
+        fromEmail: process.env.TWILIO_FROM_EMAIL,
+        fromName: process.env.FROM_NAME || 'SMP Platform',
+        useEmailApi: process.env.TWILIO_USE_EMAIL_API === 'true',
+        templates: {
+          magicLink: process.env.TWILIO_TEMPLATE_MAGIC_LINK || '',
+          welcome: process.env.TWILIO_TEMPLATE_WELCOME || '',
+          passwordReset: process.env.TWILIO_TEMPLATE_PASSWORD_RESET || '',
+          mfaCode: process.env.TWILIO_TEMPLATE_MFA_CODE || ''
+        },
+        sandbox: process.env.NODE_ENV !== 'production'
+      }
     },
     
     frontend: {
@@ -83,14 +135,8 @@ export function convertToSmpAuthConfig(muConfig: MuAuthMagicLinkConfig): MagicLi
     },
     
     email: {
-      provider: 'sendgrid',
-      sendgrid: {
-        apiKey: muConfig.sendGrid.apiKey,
-        fromEmail: muConfig.sendGrid.fromEmail,
-        fromName: muConfig.sendGrid.fromName,
-        templates: muConfig.sendGrid.templates,
-        sandbox: muConfig.sendGrid.sandbox
-      }
+      provider: 'twilio',
+      twilio: muConfig.email.twilio
     },
     
     frontend: muConfig.frontend

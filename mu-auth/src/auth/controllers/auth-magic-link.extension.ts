@@ -314,35 +314,6 @@ export class AuthControllerMagicLinkExtension {
   }
 
   /**
-   * Santé du service Magic Link
-   */
-  @Get('magic-link/health')
-  async getMagicLinkHealth(): Promise<{
-    success: boolean;
-    data?: any;
-  }> {
-    try {
-      const health = await this.magicLinkService.getServiceHealth();
-      
-      return {
-        success: health.status === 'healthy',
-        data: health
-      };
-
-    } catch (error) {
-      this.logger.error('❌ Failed to get magic link health:', error);
-      return {
-        success: false,
-        data: {
-          status: 'error',
-          message: error.message,
-          timestamp: new Date().toISOString()
-        }
-      };
-    }
-  }
-
-  /**
    * Nettoyage des liens expirés (endpoint admin)
    */
   @Post('magic-link/cleanup')

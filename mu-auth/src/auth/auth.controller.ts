@@ -1133,31 +1133,6 @@ async initiatePasswordlessAuth(
   }
 
   /**
-   * Invalidation du cache utilisateur
-   */
-  @Post('invalidate-cache')
-  async invalidateUserCache(@Body() body: { userId: string }) {
-    try {
-      await this.authService.invalidateUserCache(body.userId);
-      
-      return {
-        success: true,
-        message: 'User cache invalidated successfully'
-      };
-    } catch (error) {
-      this.logger.error(`Failed to invalidate cache for user ${body.userId}:`, error.message);
-      throw new HttpException(
-        { 
-          success: false, 
-          message: 'Failed to invalidate user cache',
-          error: error.message 
-        }, 
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
-
-  /**
    * Vérification de permissions
    */
   @Post('check-permission')

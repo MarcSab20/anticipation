@@ -2,7 +2,6 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { 
-  MagicLinkFactory,
   MagicLinkServiceImpl,
   createRedisClient,
   createKeycloakClient,
@@ -12,7 +11,8 @@ import {
   MagicLinkResult,
   MagicLinkVerificationResult
 } from 'smp-auth-ts';
-import { loadMagicLinkConfig, convertToSmpAuthConfig } from '../config/magic-link.config';
+
+import { loadMagicLinkConfig, convertToSmpAuthConfig, MagicLinkFactoryConfig } from '../config/magic-link.config';
 import { EventLoggerService } from './event-logger.service';
 
 @Injectable()
@@ -30,24 +30,19 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
  async onModuleInit() {
     try {
       this.logger.log('🔗 Initializing Magic Link service...');
-      
-      // Charger la configuration
+
       const muConfig = this.loadMagicLinkConfig();
-      
-      // Vérifier les prérequis
+
       this.validateConfiguration(muConfig);
-      
-      // Créer les clients Redis et Keycloak
+
       await this.initializeClients();
-      
-      // Convertir la config et créer le service Magic Link selon le provider
+
       const factoryConfig = this.convertToFactoryConfig(muConfig);
       
-      // Utiliser la factory mise à jour
-      this.magicLinkService = MagicLinkFactory.create(
+      this.magicLinkService = new MagicLinkServiceImpl(
         this.redisClient!,
         this.keycloakClient!,
-        factoryConfig
+       // factoryConfig
       );
       
       // Configurer les événements
@@ -165,11 +160,12 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
         requireExistingUser: muConfig.requireExistingUser,
         autoCreateUser: muConfig.autoCreateUser
       },
+      
       email: {
-        provider: muConfig.email.provider,
-        sendgrid: muConfig.email.sendgrid,
+        provider: 'twilio',
         twilio: muConfig.email.twilio
       },
+      
       frontend: muConfig.frontend
     };
   }
@@ -401,7 +397,7 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
         await this.redisClient.close();
       }
       if (this.keycloakClient) {
-        await this.keycloakClient.close();
+        //await this.keycloakClient.close();
       }
       this.logger.log('🔗 Magic Link service destroyed');
     } catch (error) {

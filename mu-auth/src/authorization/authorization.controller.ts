@@ -88,38 +88,6 @@ export class AuthorizationController {
     }
   }
 
-  @GrpcMethod('AuthorizationService', 'InvalidateUserCache')
-  async invalidateUserCache(request: { userId: string }) {
-    try {
-      await this.authService.invalidateUserCache(request.userId);
-      return { success: true, message: 'Cache invalidated' };
-    } catch (error) {
-      this.logger.error(`Error in InvalidateUserCache: ${error.message}`);
-      return { success: false, message: error.message };
-    }
-  }
-
-  @GrpcMethod('AuthorizationService', 'UpdatePolicy')
-  async updatePolicy(request: { policyId: string; policyContent: string }) {
-    try {
-      await this.authService.updatePolicy(request.policyId, request.policyContent);
-      return { success: true };
-    } catch (error) {
-      this.logger.error(`Error in UpdatePolicy: ${error.message}`);
-      return { success: false, error: error.message };
-    }
-  }
-
-  @GrpcMethod('AuthorizationService', 'GetPolicy')
-  async getPolicy(request: { policyId: string }) {
-    try {
-      const policy = await this.authService.getPolicy(request.policyId);
-      return { policy };
-    } catch (error) {
-      this.logger.error(`Error in GetPolicy: ${error.message}`);
-      throw error;
-    }
-  }
 
   // === MÉTHODES UTILITAIRES ===
 
