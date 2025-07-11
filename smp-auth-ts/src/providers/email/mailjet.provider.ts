@@ -86,8 +86,7 @@ export class MailjetProvider implements EmailProvider {
       return this.handleError(error);
     }
   }
-
-  // ⭐ MÉTHODE PRINCIPALE: HTTPS natif avec syntaxe ES6
+  
   private async sendEmailWithHttps(mailData: any): Promise<EmailResult> {
     return new Promise((resolve) => {
       console.log('📧 Sending via Mailjet HTTPS API...');
@@ -100,15 +99,16 @@ export class MailjetProvider implements EmailProvider {
         port: 443,
         path: '/v3.1/send',
         method: 'POST',
+        family: 4,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Basic ${auth}`,
           'Content-Length': Buffer.byteLength(postData),
           'User-Agent': 'smp-auth-ts-es6/2.0.0',
           'Accept': 'application/json',
-          'Connection': 'close' // ⭐ Évite les problèmes de connexion persistante
+          'Connection': 'close' 
         },
-        timeout: this.config.timeout
+        timeout: 10000
       };
 
       const req = https.request(options, (res) => {

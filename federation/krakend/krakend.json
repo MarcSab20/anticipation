@@ -141,7 +141,7 @@
           "url_pattern": "/auth/logout",
           "encoding": "json",
           "method": "POST",
-          "host": ["http://172.17.0.13001"],
+          "host": ["http://172.17.0.1:3001"],
           "disable_host_sanitize": true
         }
       ]
@@ -196,6 +196,290 @@
                 "name": "X-Frontend-Password-Reset",
                 "value": "true"
               }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/magic-link/generate",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID",
+        "X-Correlation-ID",
+        "X-Forwarded-For",
+        "User-Agent",
+        "Referer"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-magic-link"
+          }
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 10,
+          "capacity": 10,
+          "client_max_rate": 3,
+          "client_capacity": 3,
+          "strategy": "ip"
+        },
+        "validation/json-schema": {
+          "type": "object",
+          "properties": {
+            "email": {"type": "string", "format": "email"},
+            "action": {"type": "string", "enum": ["login", "register", "reset_password", "verify_email"]},
+            "redirectUrl": {"type": "string", "format": "uri"}
+          },
+          "required": ["email"]
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/magic-link/generate",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/magic-link/verify",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID",
+        "X-Correlation-ID"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-magic-link"
+          }
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 20,
+          "capacity": 20,
+          "client_max_rate": 5,
+          "client_capacity": 5,
+          "strategy": "ip"
+        },
+        "validation/json-schema": {
+          "type": "object",
+          "properties": {
+            "token": {"type": "string", "minLength": 32, "maxLength": 128}
+          },
+          "required": ["token"]
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/magic-link/verify",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/magic-link/status",
+      "method": "GET",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-magic-link"
+          }
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 30,
+          "capacity": 30,
+          "client_max_rate": 10,
+          "client_capacity": 10,
+          "strategy": "ip"
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/magic-link/status",
+          "encoding": "json",
+          "method": "GET",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/magic-link/{linkId}",
+      "method": "DELETE",
+      "output_encoding": "json",
+      "input_headers": [
+        "Authorization",
+        "X-Request-ID",
+        "X-Trace-ID"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-magic-link"
+          }
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 15,
+          "capacity": 15,
+          "client_max_rate": 5,
+          "client_capacity": 5,
+          "strategy": "ip"
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/magic-link/{linkId}",
+          "encoding": "json",
+          "method": "DELETE",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/passwordless/initiate",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Content-Type", 
+        "X-Request-ID",
+        "X-Trace-ID",
+        "X-Correlation-ID",
+        "X-Forwarded-For",
+        "User-Agent"
+      ],
+      "extra_config": {
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-passwordless"
+          }
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 10,
+          "capacity": 10,
+          "client_max_rate": 3,
+          "client_capacity": 3,
+          "strategy": "ip"
+        },
+        "validation/json-schema": {
+          "type": "object",
+          "properties": {
+            "email": {"type": "string", "format": "email"},
+            "action": {"type": "string", "enum": ["login", "register"]},
+            "redirectUrl": {"type": "string", "format": "uri"}
+          },
+          "required": ["email"]
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/passwordless/initiate",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/auth/magic-link/cleanup",
+      "method": "POST",
+      "output_encoding": "json",
+      "input_headers": [
+        "Authorization",
+        "X-Request-ID",
+        "X-Trace-ID"
+      ],
+      "extra_config": {
+        "auth/validator": {
+          "alg": "RS256",
+          "jwk_url": "http://172.17.0.1:8080/realms/mu-realm/protocol/openid-connect/certs",
+          "cache": true,
+          "cache_duration": 900,
+          "audience": ["api-gateway", "microservices"],
+          "issuer": "http://172.17.0.1:8080/realms/mu-realm",
+          "roles_key": "realm_access.roles",
+          "roles_key_is_nested": true,
+          "roles": ["admin", "super_admin"]
+        },
+        "modifier/martian": {
+          "header.Modifier": {
+            "scope": ["request"],
+            "name": "X-Gateway-Source",
+            "value": "krakend-admin"
+          }
+        },
+        "qos/ratelimit/router": {
+          "max_rate": 5,
+          "capacity": 5,
+          "client_max_rate": 1,
+          "client_capacity": 1,
+          "strategy": "ip"
+        }
+      },
+      "backend": [
+        {
+          "url_pattern": "/auth/magic-link/cleanup",
+          "encoding": "json",
+          "method": "POST",
+          "host": ["http://172.17.0.1:3001"],
+          "disable_host_sanitize": true,
+          "extra_config": {
+            "backend/http": {
+              "return_error_details": "backend_alias"
             }
           }
         }
