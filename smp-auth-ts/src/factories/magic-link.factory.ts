@@ -1,4 +1,4 @@
-
+// smp-auth-ts/src/factories/magic-link.factory.ts
 import { MagicLinkServiceImpl } from '../services/magic-link.service.js';
 import { MagicLinkConfigImpl } from '../config/magic-link.config.js';
 import { RedisClient } from '../interface/redis.interface.js';
@@ -15,14 +15,12 @@ export interface MagicLinkFactoryConfig {
   };
 
   email: {
-    provider:  'twilio'; 
-    twilio: { 
-      accountSid: string;
-      authToken: string;
-      fromPhoneNumber?: string; // Pour SMS
-      fromEmail?: string; // Pour Email API
+    provider: 'mailjet'; 
+    mailjet: { 
+      apiKey: string;
+      apiSecret: string;
+      fromEmail: string;
       fromName?: string;
-      useEmailApi?: boolean; 
       templates?: {
         magicLink?: string;
         welcome?: string;
@@ -47,16 +45,16 @@ export interface MagicLinkFactoryConfig {
 
 export class MagicLinkFactory {
 
-  static createWithTwilio(
+  static createWithMailjet(
     redisClient: RedisClient,
     keycloakClient: KeycloakClient,
     config: MagicLinkFactoryConfig
   ): MagicLinkServiceImpl {
     
-    console.log('🏭 Creating Magic Link service with Twilio...');
+    console.log('🏭 Creating Magic Link service with Mailjet...');
     
-    this.validateTwilioConfig(config);
-    const fullConfig: MagicLinkConfigImpl = this.buildFullConfigForTwilio(config);
+    this.validateMailjetConfig(config);
+    const fullConfig: MagicLinkConfigImpl = this.buildFullConfigForMailjet(config);
     
     const service = new MagicLinkServiceImpl(
       redisClient,
@@ -64,7 +62,7 @@ export class MagicLinkFactory {
       fullConfig
     );
 
-    console.log('✅ Magic Link service created successfully with Twilio');
+    console.log('✅ Magic Link service created successfully with Mailjet');
     return service;
   }
 
@@ -78,8 +76,8 @@ export class MagicLinkFactory {
   ): MagicLinkServiceImpl {
     
     switch (config.email.provider) {      
-      case 'twilio':
-        return this.createWithTwilio(redisClient, keycloakClient, config);
+      case 'mailjet':
+        return this.createWithMailjet(redisClient, keycloakClient, config);
       
       default:
         throw new Error(`Unsupported email provider: ${config.email.provider}`);
@@ -90,98 +88,85 @@ export class MagicLinkFactory {
    * Création depuis les variables d'environnement - MISE À JOUR
    */
   static createFromEnvironment(
-  redisClient: RedisClient,
-  keycloakClient: KeycloakClient
-): MagicLinkServiceImpl {
-  
-  const provider = process.env.EMAIL_PROVIDER;
-  
-  if (provider === 'twilio') {
-    const config: MagicLinkFactoryConfig = {
-      magicLink: {
-        enabled: process.env.MAGIC_LINK_ENABLED !== 'false',
-        tokenLength: parseInt(process.env.MAGIC_LINK_TOKEN_LENGTH || '32'),
-        expiryMinutes: parseInt(process.env.MAGIC_LINK_EXPIRY_MINUTES || '30'),
-        maxUsesPerDay: parseInt(process.env.MAGIC_LINK_MAX_USES_PER_DAY || '10'),
-        requireExistingUser: process.env.MAGIC_LINK_REQUIRE_EXISTING_USER === 'true',
-        autoCreateUser: process.env.MAGIC_LINK_AUTO_CREATE_USER !== 'false'
-      },
-      
-      email: {
-        provider: 'twilio',
-        twilio: {
-          accountSid: process.env.TWILIO_ACCOUNT_SID || '',
-          authToken: process.env.TWILIO_AUTH_TOKEN || '',
-          fromPhoneNumber: process.env.TWILIO_FROM_PHONE,
-          fromEmail: process.env.TWILIO_FROM_EMAIL,
-          fromName: process.env.FROM_NAME || 'SMP Platform',
-          useEmailApi: process.env.TWILIO_USE_EMAIL_API === 'true',
-          templates: {
-            magicLink: process.env.TWILIO_TEMPLATE_MAGIC_LINK,
-            welcome: process.env.TWILIO_TEMPLATE_WELCOME,
-            passwordReset: process.env.TWILIO_TEMPLATE_PASSWORD_RESET,
-            mfaCode: process.env.TWILIO_TEMPLATE_MFA_CODE
-          },
-          sandbox: process.env.NODE_ENV !== 'production'
+    redisClient: RedisClient,
+    keycloakClient: KeycloakClient
+  ): MagicLinkServiceImpl {
+    
+    const provider = process.env.EMAIL_PROVIDER;
+    
+    if (provider === 'mailjet') {
+      const config: MagicLinkFactoryConfig = {
+        magicLink: {
+          enabled: process.env.MAGIC_LINK_ENABLED !== 'false',
+          tokenLength: parseInt(process.env.MAGIC_LINK_TOKEN_LENGTH || '32'),
+          expiryMinutes: parseInt(process.env.MAGIC_LINK_EXPIRY_MINUTES || '30'),
+          maxUsesPerDay: parseInt(process.env.MAGIC_LINK_MAX_USES_PER_DAY || '10'),
+          requireExistingUser: process.env.MAGIC_LINK_REQUIRE_EXISTING_USER === 'true',
+          autoCreateUser: process.env.MAGIC_LINK_AUTO_CREATE_USER !== 'false'
+        },
+        
+        email: {
+          provider: 'mailjet',
+          mailjet: {
+            apiKey: process.env.MAILJET_API_KEY || '',
+            apiSecret: process.env.MAILJET_API_SECRET || '',
+            fromEmail: process.env.MAILJET_FROM_EMAIL || process.env.FROM_EMAIL || '',
+            fromName: process.env.FROM_NAME || 'SMP Platform',
+            templates: {
+              magicLink: process.env.MAILJET_TEMPLATE_MAGIC_LINK,
+              welcome: process.env.MAILJET_TEMPLATE_WELCOME,
+              passwordReset: process.env.MAILJET_TEMPLATE_PASSWORD_RESET,
+              mfaCode: process.env.MAILJET_TEMPLATE_MFA_CODE
+            },
+            sandbox: process.env.NODE_ENV !== 'production'
+          }
+        },
+        
+        frontend: {
+          baseUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+          magicLinkPath: process.env.MAGIC_LINK_PATH || '/auth/magic-link',
+          redirectPaths: {
+            login: process.env.REDIRECT_LOGIN || '/dashboard',
+            register: process.env.REDIRECT_REGISTER || '/welcome',
+            resetPassword: process.env.REDIRECT_RESET_PASSWORD || '/auth/password-reset',
+            verifyEmail: process.env.REDIRECT_VERIFY_EMAIL || '/auth/email-verified'
+          }
         }
-      },
-      
-      frontend: {
-        baseUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
-        magicLinkPath: process.env.MAGIC_LINK_PATH || '/auth/magic-link',
-        redirectPaths: {
-          login: process.env.REDIRECT_LOGIN || '/dashboard',
-          register: process.env.REDIRECT_REGISTER || '/welcome',
-          resetPassword: process.env.REDIRECT_RESET_PASSWORD || '/auth/password-reset',
-          verifyEmail: process.env.REDIRECT_VERIFY_EMAIL || '/auth/email-verified'
-        }
-      }
-    };
+      };
 
-    return this.createWithTwilio(redisClient, keycloakClient, config);
+      return this.createWithMailjet(redisClient, keycloakClient, config);
+    }
+    
+    // Gestion du cas où le provider n'est pas supporté
+    throw new Error(`Unsupported or missing email provider: ${provider}. Supported providers: mailjet`);
   }
-  
-  // Gestion du cas où le provider n'est pas supporté
-  throw new Error(`Unsupported or missing email provider: ${provider}. Supported providers: twilio`);
-}
 
-  // Validation Twilio - NOUVEAU
-  private static validateTwilioConfig(config: MagicLinkFactoryConfig): void {
-    if (!config.email.twilio) {
-      throw new Error('Twilio configuration is required');
+  // Validation Mailjet - NOUVEAU
+  private static validateMailjetConfig(config: MagicLinkFactoryConfig): void {
+    if (!config.email.mailjet) {
+      throw new Error('Mailjet configuration is required');
     }
 
-    if (!config.email.twilio.accountSid) {
-      throw new Error('Twilio Account SID is required');
+    if (!config.email.mailjet.apiKey) {
+      throw new Error('Mailjet API Key is required');
     }
 
-    if (!config.email.twilio.authToken) {
-      throw new Error('Twilio Auth Token is required');
+    if (!config.email.mailjet.apiSecret) {
+      throw new Error('Mailjet API Secret is required');
     }
 
-    if (config.email.twilio.useEmailApi) {
-      if (!config.email.twilio.fromEmail) {
-        throw new Error('From email address is required for Twilio Email API');
-      }
-      
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(config.email.twilio.fromEmail)) {
-        throw new Error('Invalid from email address format');
-      }
-    } else {
-      if (!config.email.twilio.fromPhoneNumber) {
-        throw new Error('From phone number is required for Twilio SMS');
-      }
-      
-      const phoneRegex = /^\+?[1-9]\d{1,14}$/;
-      if (!phoneRegex.test(config.email.twilio.fromPhoneNumber)) {
-        throw new Error('Invalid phone number format (use E.164 format)');
-      }
+    if (!config.email.mailjet.fromEmail) {
+      throw new Error('From email address is required for Mailjet');
+    }
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(config.email.mailjet.fromEmail)) {
+      throw new Error('Invalid from email address format');
     }
   }
 
-  // Build config Twilio - NOUVEAU
-  private static buildFullConfigForTwilio(config: MagicLinkFactoryConfig): MagicLinkConfigImpl {
+  // Build config Mailjet - NOUVEAU
+  private static buildFullConfigForMailjet(config: MagicLinkFactoryConfig): MagicLinkConfigImpl {
     return {
       enabled: config.magicLink?.enabled ?? true,
       tokenLength: config.magicLink?.tokenLength ?? 32,
@@ -193,29 +178,27 @@ export class MagicLinkFactory {
       emailTemplate: 'magic-link',
 
       email: {
-        provider: 'twilio',
+        provider: 'mailjet',
         config: {
-          accountSid: config.email.twilio!.accountSid,
-          authToken: config.email.twilio!.authToken,
-          fromPhoneNumber: config.email.twilio!.fromPhoneNumber,
-          fromEmail: config.email.twilio!.fromEmail,
-          fromName: config.email.twilio!.fromName || 'SMP Platform',
-          useEmailApi: config.email.twilio!.useEmailApi ?? false,
+          apiKey: config.email.mailjet!.apiKey,
+          apiSecret: config.email.mailjet!.apiSecret,
+          fromEmail: config.email.mailjet!.fromEmail,
+          fromName: config.email.mailjet!.fromName || 'SMP Platform',
           templates: {
-            magicLink: config.email.twilio!.templates?.magicLink || '',
-            mfaCode: config.email.twilio!.templates?.mfaCode || '',
-            welcome: config.email.twilio!.templates?.welcome || '',
-            passwordReset: config.email.twilio!.templates?.passwordReset || ''
+            magicLink: config.email.mailjet!.templates?.magicLink || '',
+            mfaCode: config.email.mailjet!.templates?.mfaCode || '',
+            welcome: config.email.mailjet!.templates?.welcome || '',
+            passwordReset: config.email.mailjet!.templates?.passwordReset || ''
           },
-          sandbox: config.email.twilio!.sandbox ?? (process.env.NODE_ENV !== 'production'),
+          sandbox: config.email.mailjet!.sandbox ?? (process.env.NODE_ENV !== 'production'),
           retryAttempts: 3,
           retryDelay: 1000,
           timeout: 30000
         },
         templates: {
-          magicLink: config.email.twilio!.templates?.magicLink || 'magic-link-template',
-          welcome: config.email.twilio!.templates?.welcome || 'welcome-template',
-          passwordReset: config.email.twilio!.templates?.passwordReset || 'password-reset-template'
+          magicLink: config.email.mailjet!.templates?.magicLink || 'magic-link-template',
+          welcome: config.email.mailjet!.templates?.welcome || 'welcome-template',
+          passwordReset: config.email.mailjet!.templates?.passwordReset || 'password-reset-template'
         }
       },
 

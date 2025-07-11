@@ -68,7 +68,8 @@ import { loadConfig } from './config.js';
 import { MagicLinkServiceImpl } from './services/magic-link.service.js';
 import { MagicLinkConfigImpl } from './config/magic-link.config.js';
 import { EmailServiceImpl } from './services/email.service.js';
-import { TwilioProvider } from './providers/email/twilio.provider.js';
+import { MailjetProvider, MailjetConfig } from './providers/email/mailjet.provider.js';
+
 
 export function createAuthService(
   config?: Partial<AuthConfig>,
@@ -106,16 +107,14 @@ export function createMagicLinkService(
   return new MagicLinkServiceImpl(redisClient, keycloakClient, config);
 }
 
-export function createMagicLinkWithTwilio(
+export function createMagicLinkWithMailjet(
   redisClient: RedisClient,
   keycloakClient: KeycloakClient,
-  twilioConfig: {
-    accountSid: string;
-    authToken: string;
-    fromEmail?: string;
-    fromPhoneNumber?: string;
+  mailjetConfig: {
+    apiKey: string;
+    apiSecret: string;
+    fromEmail: string; // Requis
     fromName?: string;
-    useEmailApi?: boolean;
     templates?: {
       magicLink?: string;
       welcome?: string;
@@ -126,21 +125,23 @@ export function createMagicLinkWithTwilio(
   },
   magicLinkConfig?: Partial<MagicLinkConfigImpl>
 ): MagicLinkServiceImpl {
-  return MagicLinkServiceImpl.createWithTwilio(
+  if (!mailjetConfig.fromEmail) {
+    throw new Error('fromEmail is required for Mailjet configuration');
+  }
+
+  return MagicLinkServiceImpl.createWithMailjet(
     redisClient,
     keycloakClient,
-    twilioConfig,
+    mailjetConfig,
     magicLinkConfig
   );
 }
 
-export function createEmailServiceWithTwilio(config: {
-  accountSid: string;
-  authToken: string;
-  fromEmail?: string;
-  fromPhoneNumber?: string;
+export function createEmailServiceWithMailjet(config: {
+  apiKey: string;
+  apiSecret: string;
+  fromEmail: string; // Requis
   fromName?: string;
-  useEmailApi?: boolean;
   templates?: {
     magicLink: string;
     mfaCode: string;
@@ -149,11 +150,28 @@ export function createEmailServiceWithTwilio(config: {
   };
   sandbox?: boolean;
 }): EmailServiceImpl {
+  // Validation des paramètres requis
+  if (!config.fromEmail) {
+    throw new Error('fromEmail is required for Mailjet configuration');
+  }
+
+  const mailjetConfig: MailjetConfig = {
+    apiKey: config.apiKey,
+    apiSecret: config.apiSecret,
+    fromEmail: config.fromEmail,
+    fromName: config.fromName,
+    templates: config.templates,
+    sandbox: config.sandbox,
+    retryAttempts: 3,
+    retryDelay: 1000,
+    timeout: 30000
+  };
+
   const emailService = new EmailServiceImpl();
-  const twilioProvider = new TwilioProvider(config);
+  const mailjetProvider = new MailjetProvider(mailjetConfig);
   
-  emailService.registerProvider('twilio', twilioProvider);
-  emailService.setDefaultProvider('twilio');
+  emailService.registerProvider('mailjet', mailjetProvider);
+  emailService.setDefaultProvider('mailjet');
   
   return emailService;
 }
@@ -163,30 +181,27 @@ export function createMagicLinkFromEnv(
   keycloakClient: KeycloakClient
 ): MagicLinkServiceImpl {
   
-  const requiredVars = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'];
+  const requiredVars = ['MAILJET_API_KEY', 'MAILJET_API_SECRET'];
   const missing = requiredVars.filter(key => !process.env[key]);
   
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables for Magic Link: ${missing.join(', ')}`);
   }
 
-  // Vérifier qu'au moins un moyen de communication est configuré
-  if (!process.env.TWILIO_FROM_EMAIL && !process.env.TWILIO_FROM_PHONE) {
-    throw new Error('Either TWILIO_FROM_EMAIL or TWILIO_FROM_PHONE must be configured');
+  if (!process.env.MAILJET_FROM_EMAIL) {
+    throw new Error('MAILJET_FROM_EMAIL must be configured');
   }
 
-  const twilioConfig = {
-    accountSid: process.env.TWILIO_ACCOUNT_SID!,
-    authToken: process.env.TWILIO_AUTH_TOKEN!,
-    fromEmail: process.env.TWILIO_FROM_EMAIL,
-    fromPhoneNumber: process.env.TWILIO_FROM_PHONE,
+  const mailjetConfig = {
+    apiKey: process.env.MAILJET_API_KEY!,
+    apiSecret: process.env.MAILJET_API_SECRET!,
+    fromEmail: process.env.MAILJET_FROM_EMAIL!,
     fromName: process.env.FROM_NAME || 'SMP Platform',
-    useEmailApi: process.env.TWILIO_USE_EMAIL_API === 'true',
     templates: {
-      magicLink: process.env.TWILIO_TEMPLATE_MAGIC_LINK,
-      welcome: process.env.TWILIO_TEMPLATE_WELCOME,
-      passwordReset: process.env.TWILIO_TEMPLATE_PASSWORD_RESET,
-      mfaCode: process.env.TWILIO_TEMPLATE_MFA_CODE
+      magicLink: process.env.MAILJET_TEMPLATE_MAGIC_LINK,
+      welcome: process.env.MAILJET_TEMPLATE_WELCOME,
+      passwordReset: process.env.MAILJET_TEMPLATE_PASSWORD_RESET,
+      mfaCode: process.env.MAILJET_TEMPLATE_MFA_CODE
     },
     sandbox: process.env.NODE_ENV !== 'production'
   };
@@ -200,10 +215,10 @@ export function createMagicLinkFromEnv(
     autoCreateUser: process.env.MAGIC_LINK_AUTO_CREATE_USER !== 'false'
   };
 
-  return createMagicLinkWithTwilio(
+  return createMagicLinkWithMailjet(
     redisClient,
     keycloakClient,
-    twilioConfig,
+    mailjetConfig,
     magicLinkConfig
   );
 }

@@ -1,3 +1,4 @@
+// smp-auth-ts/src/services/magic-link.service.ts - Version avec Mailjet
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import {
   MagicLinkService,
@@ -19,7 +20,7 @@ import { KeycloakClient, UserInfo, AuthResponse } from '../interface/auth.interf
 import { EmailService, EmailResult } from '../interface/email.interface.js';
 import { MagicLinkConfigImpl, loadMagicLinkConfig } from '../config/magic-link.config.js';
 import { EmailServiceImpl } from './email.service.js';
-import { TwilioProvider } from '../providers/email/twilio.provider.js';
+import { MailjetProvider } from '../providers/email/mailjet.provider.js';
 
 export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthService {
   private readonly redisClient: RedisClient;
@@ -46,10 +47,10 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
     const emailService = new EmailServiceImpl();
     
     switch (this.config.email.provider) {
-      case 'twilio':
-        const twilioProvider = new TwilioProvider(this.config.email.config);
-        emailService.registerProvider('twilio', twilioProvider);
-        emailService.setDefaultProvider('twilio');
+      case 'mailjet':
+        const mailjetProvider = new MailjetProvider(this.config.email.config);
+        emailService.registerProvider('mailjet', mailjetProvider);
+        emailService.setDefaultProvider('mailjet');
         break;
 
       default:
@@ -120,7 +121,7 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
       // Incrémenter le compteur quotidien
       await this.incrementDailyCounter(request.email);
 
-      // Envoyer l'email avec le provider configuré
+      // Envoyer l'email avec Mailjet
       const emailResult = await this.sendMagicLinkEmail(magicLink);
 
       await this.emitEvent({
@@ -138,7 +139,7 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
         success: true,
         linkId,
         message: emailResult.success 
-          ? 'Magic link sent successfully' 
+          ? 'Magic link sent successfully via Mailjet' 
           : `Magic link generated but email failed: ${emailResult.error}`,
         expiresAt: expiresAt.toISOString(),
         emailSent: emailResult.success
@@ -153,62 +154,52 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
     }
   }
 
-  private async sendMagicLinkEmail(magicLink: MagicLink): Promise<EmailResult> {
-    try {
-      console.log(`📧 Sending magic link email to ${magicLink.email} via ${this.config.email.provider}`);
-      
-      const magicLinkUrl = this.buildMagicLinkUrl(magicLink);
-      
-      const emailResult = await this.emailService.sendMagicLink(
-        magicLink.email,
-        magicLink.token,
-        {
-          redirectUrl: magicLink.redirectUrl,
-          action: magicLink.action,
-          expiresAt: magicLink.expiresAt,
-          userAgent: magicLink.metadata?.userAgent,
-          ip: magicLink.metadata?.ip,
-          provider: this.config.email.provider
-        }
-      );
-
-      if (emailResult.success) {
-        console.log(`✅ Magic link email sent successfully. Message ID: ${emailResult.messageId}`);
-        
-        
-        await this.updateMagicLink(magicLink);
-      } else {
-        console.error(`❌ Failed to send magic link email: ${emailResult.error}`);
+ private async sendMagicLinkEmail(magicLink: MagicLink): Promise<EmailResult> {
+  try {
+    console.log(`📧 Sending magic link email to ${magicLink.email} via ${this.config.email.provider}`);
+    
+    const emailResult = await this.emailService.sendMagicLink(
+      magicLink.email,
+      magicLink.token,
+      {
+        redirectUrl: magicLink.redirectUrl,
+        action: magicLink.action,
+        expiresAt: magicLink.expiresAt,
+        userAgent: magicLink.metadata?.userAgent,
+        ip: magicLink.metadata?.ip,
+        provider: this.config.email.provider
       }
+    );
 
-      return emailResult;
-    } catch (error) {
-      console.error('❌ Error sending magic link email:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        provider: this.config.email.provider,
-        timestamp: new Date().toISOString()
+    if (emailResult.success) {
+      console.log(`✅ Magic link email sent successfully via Mailjet. Message ID: ${emailResult.messageId}`);
+      
+      magicLink.metadata = {
+        ...magicLink.metadata,
       };
+      
+      // Ajouter messageId seulement si fourni
+      if (emailResult.messageId) {
+        (magicLink.metadata as any).emailMessageId = emailResult.messageId;
+      }
+      
+      await this.updateMagicLink(magicLink);
+    } else {
+      console.error(`❌ Failed to send magic link email via Mailjet: ${emailResult.error}`);
     }
-  }
 
-  private buildMagicLinkUrl(magicLink: MagicLink): string {
-    const baseUrl = this.config.frontend.baseUrl;
-    const magicLinkPath = this.config.frontend.magicLinkPath;
-    
-    const url = new URL(magicLinkPath, baseUrl);
-    url.searchParams.set('token', magicLink.token);
-    
-    if (magicLink.redirectUrl) {
-      url.searchParams.set('redirect', encodeURIComponent(magicLink.redirectUrl));
-    }
-    
-    // Ajouter l'action pour le frontend
-    url.searchParams.set('action', magicLink.action);
-    
-    return url.toString();
+    return emailResult;
+  } catch (error) {
+    console.error('❌ Error sending magic link email:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      provider: this.config.email.provider,
+      timestamp: new Date().toISOString()
+    };
   }
+}
+
 
   private buildRedirectUrl(request: MagicLinkRequest): string {
     if (request.redirectUrl) {
@@ -423,6 +414,7 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
       
       const authResponse = await this.keycloakClient.getClientCredentialsToken!();
 
+      // Envoyer email de bienvenue via Mailjet
       await this.sendWelcomeEmail(magicLink.email, userInfo?.given_name, userInfo?.family_name);
 
       return {
@@ -521,7 +513,7 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
 
   private async sendWelcomeEmail(email: string, firstName?: string, lastName?: string): Promise<void> {
     try {
-      console.log(`📧 Sending welcome email to: ${email}`);
+      console.log(`📧 Sending welcome email to: ${email} via Mailjet`);
       
       const result = await this.emailService.sendWelcomeEmail(email, {
         firstName,
@@ -530,9 +522,9 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
       });
       
       if (result.success) {
-        console.log(`✅ Welcome email sent successfully`);
+        console.log(`✅ Welcome email sent successfully via Mailjet`);
       } else {
-        console.error(`❌ Failed to send welcome email: ${result.error}`);
+        console.error(`❌ Failed to send welcome email via Mailjet: ${result.error}`);
       }
     } catch (error) {
       console.error('❌ Welcome email error:', error);
@@ -617,52 +609,53 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
     }
   }
 
-  
   async sendMagicLink(linkId: string): Promise<boolean> {
-    try {
-      const magicLink = await this.getMagicLink(linkId);
-      if (!magicLink) {
-        console.error(`❌ Magic link not found: ${linkId}`);
-        return false;
-      }
-
-      // Vérifier que le lien n'a pas expiré
-      if (new Date() > new Date(magicLink.expiresAt)) {
-        console.error(`❌ Magic link expired: ${linkId}`);
-        await this.updateLinkStatus(linkId, 'expired');
-        return false;
-      }
-
-      // Vérifier que le lien n'a pas déjà été utilisé
-      if (magicLink.status === 'used' || magicLink.status === 'revoked') {
-        console.error(`❌ Magic link already used or revoked: ${linkId}`);
-        return false;
-      }
-
-      // Envoyer l'email avec le provider configuré
-      const emailResult = await this.sendMagicLinkEmail(magicLink);
-
-      if (emailResult.success) {
-        console.log(`✅ Magic link email resent successfully: ${linkId}`);
-        
-        // Optionnel: marquer la dernière fois que l'email a été envoyé
-        magicLink.metadata = {
-          ...magicLink.metadata
-        };
-        
-        await this.updateMagicLink(magicLink);
-        
-        return true;
-      } else {
-        console.error(`❌ Failed to resend magic link email: ${emailResult.error}`);
-        return false;
-      }
-    } catch (error) {
-      console.error(`❌ Error resending magic link ${linkId}:`, error);
+  try {
+    const magicLink = await this.getMagicLink(linkId);
+    if (!magicLink) {
+      console.error(`❌ Magic link not found: ${linkId}`);
       return false;
     }
-  }
 
+    // Vérifier que le lien n'a pas expiré
+    if (new Date() > new Date(magicLink.expiresAt)) {
+      console.error(`❌ Magic link expired: ${linkId}`);
+      await this.updateLinkStatus(linkId, 'expired');
+      return false;
+    }
+
+    // Vérifier que le lien n'a pas déjà été utilisé
+    if (magicLink.status === 'used' || magicLink.status === 'revoked') {
+      console.error(`❌ Magic link already used or revoked: ${linkId}`);
+      return false;
+    }
+
+    // Envoyer l'email avec Mailjet
+    const emailResult = await this.sendMagicLinkEmail(magicLink);
+
+    if (emailResult.success) {
+      console.log(`✅ Magic link email resent successfully via Mailjet: ${linkId}`);
+      
+      // Marquer la dernière fois que l'email a été envoyé
+      magicLink.metadata = {
+        ...magicLink.metadata
+      };
+      
+      // Ajouter lastEmailSentAt comme propriété étendue
+      (magicLink.metadata as any).lastEmailSentAt = new Date().toISOString();
+      
+      await this.updateMagicLink(magicLink);
+      
+      return true;
+    } else {
+      console.error(`❌ Failed to resend magic link email via Mailjet: ${emailResult.error}`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`❌ Error resending magic link ${linkId}:`, error);
+    return false;
+  }
+}
   async getUserMagicLinks(email: string): Promise<MagicLink[]> {
     try {
       const linkIds = await this.redisClient.sMembers(`magic_link:email:${email}`);
@@ -728,9 +721,7 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
     const link = await this.getMagicLink(linkId);
     if (link) {
       await this.redisClient.delete(`magic_link:${linkId}`);
-      
       await this.redisClient.delete(`magic_link:token:${link.token}`);
-      
       await this.redisClient.sRem(`magic_link:email:${link.email}`, linkId);
     }
   }
@@ -802,16 +793,15 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
   }
 
   private shouldRequireMFA(userInfo: UserInfo): boolean {
- 
-  const adminRoles = ['admin', 'super_admin', 'administrator'];
-  const hasAdminRole = userInfo.roles.some(role => 
-    adminRoles.some(adminRole => role.toLowerCase().includes(adminRole))
-  );
-  
-  // MFA requis pour les administrateurs ou selon les attributs utilisateur
-  const riskScoreRequiresMFA = userInfo.attributes?.riskScore != null && userInfo.attributes.riskScore > 50;
-  
-  return hasAdminRole || riskScoreRequiresMFA;
+    const adminRoles = ['admin', 'super_admin', 'administrator'];
+    const hasAdminRole = userInfo.roles.some(role => 
+      adminRoles.some(adminRole => role.toLowerCase().includes(adminRole))
+    );
+    
+    // MFA requis pour les administrateurs ou selon les attributs utilisateur
+    const riskScoreRequiresMFA = userInfo.attributes?.riskScore != null && userInfo.attributes.riskScore > 50;
+    
+    return hasAdminRole || riskScoreRequiresMFA;
   }
 
   private async emitEvent(event: Omit<MFAEvent, 'id' | 'timestamp'>): Promise<void> {
@@ -857,7 +847,6 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
     }
   }
 
-
   static create(
     redisClient: RedisClient,
     keycloakClient: KeycloakClient,
@@ -866,16 +855,14 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
     return new MagicLinkServiceImpl(redisClient, keycloakClient, config);
   }
 
-  static createWithTwilio(
+  static createWithMailjet(
   redisClient: RedisClient,
   keycloakClient: KeycloakClient,
-  twilioConfig: {
-    accountSid: string;
-    authToken: string;
+  mailjetConfig: {
+    apiKey: string;
+    apiSecret: string;
     fromEmail?: string;
-    fromPhoneNumber?: string;
     fromName?: string;
-    useEmailApi?: boolean;
     templates?: {
       magicLink?: string;
       welcome?: string;
@@ -889,33 +876,30 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
   const config: Partial<MagicLinkConfigImpl> = {
     ...magicLinkConfig,
     email: {
-      provider: 'twilio',
+      provider: 'mailjet',
       config: {
-        accountSid: twilioConfig.accountSid,
-        authToken: twilioConfig.authToken,
-        fromEmail: twilioConfig.fromEmail,
-        fromPhoneNumber: twilioConfig.fromPhoneNumber,
-        fromName: twilioConfig.fromName || 'SMP Platform',
-        useEmailApi: twilioConfig.useEmailApi ?? true,
+        apiKey: mailjetConfig.apiKey,
+        apiSecret: mailjetConfig.apiSecret,
+        fromEmail: mailjetConfig.fromEmail || 'noreply@example.com',
+        fromName: mailjetConfig.fromName || 'SMP Platform',
         templates: {
-          magicLink: twilioConfig.templates?.magicLink || '',
-          mfaCode: twilioConfig.templates?.mfaCode || '',
-          welcome: twilioConfig.templates?.welcome || '',
-          passwordReset: twilioConfig.templates?.passwordReset || ''
+          magicLink: mailjetConfig.templates?.magicLink || '',
+          mfaCode: mailjetConfig.templates?.mfaCode || '',
+          welcome: mailjetConfig.templates?.welcome || '',
+          passwordReset: mailjetConfig.templates?.passwordReset || ''
         },
         retryAttempts: 3,
         retryDelay: 1000,
         timeout: 30000,
-        sandbox: twilioConfig.sandbox ?? (process.env.NODE_ENV !== 'production')
+        sandbox: mailjetConfig.sandbox ?? (process.env.NODE_ENV !== 'production')
       },
       templates: {
-        magicLink: twilioConfig.templates?.magicLink || 'magic-link-template',
-        welcome: twilioConfig.templates?.welcome || 'welcome-template',
-        passwordReset: twilioConfig.templates?.passwordReset || 'password-reset-template'
+        magicLink: mailjetConfig.templates?.magicLink || 'magic-link-template',
+        welcome: mailjetConfig.templates?.welcome || 'welcome-template',
+        passwordReset: mailjetConfig.templates?.passwordReset || 'password-reset-template'
       }
     }
   };
-
   return new MagicLinkServiceImpl(redisClient, keycloakClient, config);
 }
 }

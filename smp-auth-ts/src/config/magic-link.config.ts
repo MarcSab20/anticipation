@@ -1,10 +1,11 @@
+// smp-auth-ts/src/config/magic-link.config.ts
 import { MagicLinkConfig } from '../interface/mfa.interface.js'
-import { TwilioConfig } from '../providers/email/twilio.provider.js'; // NOUVEAU
+import { MailjetConfig } from '../providers/email/mailjet.provider.js'; // NOUVEAU
 
 export interface MagicLinkConfigImpl extends MagicLinkConfig {
   email: {
-    provider: 'twilio'; 
-    config: TwilioConfig; 
+    provider: 'mailjet'; 
+    config: MailjetConfig; 
     templates: {
       magicLink: string;
       welcome: string;
@@ -34,7 +35,7 @@ export const defaultMagicLinkConfig: MagicLinkConfigImpl = {
   emailTemplate: 'magic-link',
 
   email: {
-    provider: 'twilio', 
+    provider: 'mailjet', 
     config: getDefaultEmailConfig(), 
     templates: {
       magicLink: 'magic-link-template',
@@ -55,27 +56,23 @@ export const defaultMagicLinkConfig: MagicLinkConfigImpl = {
 };
 
 // NOUVELLE FONCTION pour déterminer la config par défaut selon le provider
-function getDefaultEmailConfig(): TwilioConfig {
-  const provider = 'twilio';
-
-    return {
-      accountSid: process.env.TWILIO_ACCOUNT_SID || '',
-      authToken: process.env.TWILIO_AUTH_TOKEN || '',
-      fromPhoneNumber: process.env.TWILIO_FROM_PHONE || '',
-      fromEmail: process.env.TWILIO_FROM_EMAIL,
-      fromName: process.env.FROM_NAME || 'SMP Platform',
-      useEmailApi: process.env.TWILIO_USE_EMAIL_API === 'true',
-      templates: {
-        magicLink: process.env.TWILIO_TEMPLATE_MAGIC_LINK || '',
-        mfaCode: process.env.TWILIO_TEMPLATE_MFA_CODE || '',
-        welcome: process.env.TWILIO_TEMPLATE_WELCOME || '',
-        passwordReset: process.env.TWILIO_TEMPLATE_PASSWORD_RESET || ''
-      },
-      sandbox: process.env.NODE_ENV !== 'production',
-      retryAttempts: 3,
-      retryDelay: 1000,
-      timeout: 30000
-    } as TwilioConfig;
+function getDefaultEmailConfig(): MailjetConfig {
+  return {
+    apiKey: process.env.MAILJET_API_KEY || '',
+    apiSecret: process.env.MAILJET_API_SECRET || '',
+    fromEmail: process.env.MAILJET_FROM_EMAIL || process.env.FROM_EMAIL || '',
+    fromName: process.env.FROM_NAME || 'SMP Platform',
+    templates: {
+      magicLink: process.env.MAILJET_TEMPLATE_MAGIC_LINK || '',
+      mfaCode: process.env.MAILJET_TEMPLATE_MFA_CODE || '',
+      welcome: process.env.MAILJET_TEMPLATE_WELCOME || '',
+      passwordReset: process.env.MAILJET_TEMPLATE_PASSWORD_RESET || ''
+    },
+    sandbox: process.env.NODE_ENV !== 'production',
+    retryAttempts: 3,
+    retryDelay: 1000,
+    timeout: 30000
+  } as MailjetConfig;
 }
 
 export function loadMagicLinkConfig(overrides?: Partial<MagicLinkConfigImpl>): MagicLinkConfigImpl {

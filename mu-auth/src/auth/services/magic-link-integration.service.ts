@@ -36,29 +36,26 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
 
       await this.initializeClients();
 
-      // ✅ Créer directement avec la config Twilio
-      this.magicLinkService = MagicLinkServiceImpl.createWithTwilio(
-        this.redisClient!,
-        this.keycloakClient!,
-        {
-          accountSid: muConfig.twilio.accountSid,
-          authToken: muConfig.twilio.authToken,
-          fromEmail: muConfig.twilio.fromEmail,
-          fromPhoneNumber: muConfig.twilio.fromPhoneNumber,
-          fromName: muConfig.twilio.fromName,
-          useEmailApi: muConfig.twilio.useEmailApi,
-          templates: muConfig.twilio.templates,
-          sandbox: muConfig.twilio.sandbox
-        },
-        {
-          enabled: muConfig.enabled,
-          tokenLength: muConfig.tokenLength,
-          expiryMinutes: muConfig.expiryMinutes,
-          maxUsesPerDay: muConfig.maxUsesPerDay,
-          requireExistingUser: muConfig.requireExistingUser,
-          autoCreateUser: muConfig.autoCreateUser
-        }
-      );
+      this.magicLinkService = MagicLinkServiceImpl.createWithMailjet(
+      this.redisClient!,
+      this.keycloakClient!,
+      {
+        apiKey: muConfig.mailjet.apiKey,
+        apiSecret: muConfig.mailjet.apiSecret,
+        fromEmail: muConfig.mailjet.fromEmail,
+        fromName: muConfig.mailjet.fromName,
+        templates: muConfig.mailjet.templates,
+        sandbox: muConfig.mailjet.sandbox
+      },
+      {
+        enabled: muConfig.enabled,
+        tokenLength: muConfig.tokenLength,
+        expiryMinutes: muConfig.expiryMinutes,
+        maxUsesPerDay: muConfig.maxUsesPerDay,
+        requireExistingUser: muConfig.requireExistingUser,
+        autoCreateUser: muConfig.autoCreateUser
+      }
+    );
       
       // Configurer les événements
       this.setupEventHandlers();
@@ -72,91 +69,86 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
   }
 
   private validateConfiguration(config: any): void {
-    const errors: string[] = [];
-    
-    if (!config.enabled) {
-      this.logger.warn('🔗 Magic Link is disabled');
-      return;
-    }
-    
-    // ✅ Validation pour Twilio (pas SendGrid)
-    if (!config.twilio.accountSid) {
-      errors.push('TWILIO_ACCOUNT_SID is required');
-    }
-    
-    if (!config.twilio.authToken) {
-      errors.push('TWILIO_AUTH_TOKEN is required');
-    }
-    
-    if (config.twilio.useEmailApi && !config.twilio.fromEmail) {
-      errors.push('TWILIO_FROM_EMAIL is required when TWILIO_USE_EMAIL_API=true');
-    }
-    
-    if (!config.twilio.useEmailApi && !config.twilio.fromPhoneNumber) {
-      errors.push('TWILIO_FROM_PHONE is required when TWILIO_USE_EMAIL_API=false');
-    }
-    
-    if (!config.frontend.baseUrl) {
-      errors.push('FRONTEND_URL is required');
-    }
-    
-    // Validation format email si utilisé
-    if (config.twilio.fromEmail) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(config.twilio.fromEmail)) {
-        errors.push('TWILIO_FROM_EMAIL format is invalid');
-      }
-    }
-    
-    // Validation URL frontend
-    try {
-      new URL(config.frontend.baseUrl);
-    } catch {
-      errors.push('FRONTEND_URL format is invalid');
-    }
-    
-    if (errors.length > 0) {
-      throw new Error(`Magic Link configuration errors: ${errors.join(', ')}`);
+  const errors: string[] = [];
+  
+  if (!config.enabled) {
+    this.logger.warn('🔗 Magic Link is disabled');
+    return;
+  }
+  
+  // ✅ Validation pour Mailjet
+  if (!config.mailjet.apiKey) {
+    errors.push('MAILJET_API_KEY is required');
+  }
+  
+  if (!config.mailjet.apiSecret) {
+    errors.push('MAILJET_API_SECRET is required');
+  }
+  
+  if (!config.mailjet.fromEmail) {
+    errors.push('MAILJET_FROM_EMAIL is required');
+  }
+  
+  if (!config.frontend.baseUrl) {
+    errors.push('FRONTEND_URL is required');
+  }
+  
+  // Validation format email
+  if (config.mailjet.fromEmail) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(config.mailjet.fromEmail)) {
+      errors.push('MAILJET_FROM_EMAIL format is invalid');
     }
   }
+  
+  // Validation URL frontend
+  try {
+    new URL(config.frontend.baseUrl);
+  } catch {
+    errors.push('FRONTEND_URL format is invalid');
+  }
+  
+  if (errors.length > 0) {
+    throw new Error(`Magic Link configuration errors: ${errors.join(', ')}`);
+  }
+}
+
 
   private loadMagicLinkConfig(): any {
-    return {
-      enabled: this.configService.get('MAGIC_LINK_ENABLED', 'true') !== 'false',
-      tokenLength: parseInt(this.configService.get('MAGIC_LINK_TOKEN_LENGTH', '32')),
-      expiryMinutes: parseInt(this.configService.get('MAGIC_LINK_EXPIRY_MINUTES', '30')),
-      maxUsesPerDay: parseInt(this.configService.get('MAGIC_LINK_MAX_USES_PER_DAY', '10')),
-      requireExistingUser: this.configService.get('MAGIC_LINK_REQUIRE_EXISTING_USER', 'false') === 'true',
-      autoCreateUser: this.configService.get('MAGIC_LINK_AUTO_CREATE_USER', 'true') !== 'false',
-      
-      twilio: {
-        accountSid: this.configService.get('TWILIO_ACCOUNT_SID', ''),
-        authToken: this.configService.get('TWILIO_AUTH_TOKEN', ''),
-        fromPhoneNumber: this.configService.get('TWILIO_FROM_PHONE'),
-        fromEmail: this.configService.get('TWILIO_FROM_EMAIL'),
-        fromName: this.configService.get('FROM_NAME', 'SMP Platform'),
-        useEmailApi: this.configService.get('TWILIO_USE_EMAIL_API', 'false') === 'true',
-        templates: {
-          magicLink: this.configService.get('TWILIO_TEMPLATE_MAGIC_LINK', ''),
-          welcome: this.configService.get('TWILIO_TEMPLATE_WELCOME', ''),
-          passwordReset: this.configService.get('TWILIO_TEMPLATE_PASSWORD_RESET', ''),
-          mfaCode: this.configService.get('TWILIO_TEMPLATE_MFA_CODE', '')
-        },
-        sandbox: this.configService.get('NODE_ENV') !== 'production'
+  return {
+    enabled: this.configService.get('MAGIC_LINK_ENABLED', 'true') !== 'false',
+    tokenLength: parseInt(this.configService.get('MAGIC_LINK_TOKEN_LENGTH', '32')),
+    expiryMinutes: parseInt(this.configService.get('MAGIC_LINK_EXPIRY_MINUTES', '30')),
+    maxUsesPerDay: parseInt(this.configService.get('MAGIC_LINK_MAX_USES_PER_DAY', '10')),
+    requireExistingUser: this.configService.get('MAGIC_LINK_REQUIRE_EXISTING_USER', 'false') === 'true',
+    autoCreateUser: this.configService.get('MAGIC_LINK_AUTO_CREATE_USER', 'true') !== 'false',
+    
+    mailjet: {
+      apiKey: this.configService.get('MAILJET_API_KEY', ''),
+      apiSecret: this.configService.get('MAILJET_API_SECRET', ''),
+      fromEmail: this.configService.get('MAILJET_FROM_EMAIL', ''),
+      fromName: this.configService.get('FROM_NAME', 'SMP Platform'),
+      templates: {
+        magicLink: this.configService.get('MAILJET_TEMPLATE_MAGIC_LINK', ''),
+        welcome: this.configService.get('MAILJET_TEMPLATE_WELCOME', ''),
+        passwordReset: this.configService.get('MAILJET_TEMPLATE_PASSWORD_RESET', ''),
+        mfaCode: this.configService.get('MAILJET_TEMPLATE_MFA_CODE', '')
       },
-      
-      frontend: {
-        baseUrl: this.configService.get('FRONTEND_URL', 'http://localhost:3000'),
-        magicLinkPath: this.configService.get('MAGIC_LINK_PATH', '/auth/magic-link'),
-        redirectPaths: {
-          login: this.configService.get('REDIRECT_LOGIN', '/dashboard'),
-          register: this.configService.get('REDIRECT_REGISTER', '/welcome'),
-          resetPassword: this.configService.get('REDIRECT_RESET_PASSWORD', '/auth/password-reset'),
-          verifyEmail: this.configService.get('REDIRECT_VERIFY_EMAIL', '/auth/email-verified')
-        }
+      sandbox: this.configService.get('NODE_ENV') !== 'production'
+    },
+    
+    frontend: {
+      baseUrl: this.configService.get('FRONTEND_URL', 'http://localhost:3000'),
+      magicLinkPath: this.configService.get('MAGIC_LINK_PATH', '/auth/magic-link'),
+      redirectPaths: {
+        login: this.configService.get('REDIRECT_LOGIN', '/dashboard'),
+        register: this.configService.get('REDIRECT_REGISTER', '/welcome'),
+        resetPassword: this.configService.get('REDIRECT_RESET_PASSWORD', '/auth/password-reset'),
+        verifyEmail: this.configService.get('REDIRECT_VERIFY_EMAIL', '/auth/email-verified')
       }
-    };
-  }
+    }
+  };
+}
 
   private async initializeClients(): Promise<void> {
     try {
