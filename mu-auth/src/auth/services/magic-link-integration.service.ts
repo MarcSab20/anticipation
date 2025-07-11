@@ -12,7 +12,6 @@ import {
   MagicLinkVerificationResult
 } from 'smp-auth-ts';
 
-import { loadMagicLinkConfig, convertToSmpAuthConfig, MagicLinkFactoryConfig } from '../config/magic-link.config';
 import { EventLoggerService } from './event-logger.service';
 
 @Injectable()
@@ -27,7 +26,7 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
     private readonly eventLogger: EventLoggerService
   ) {}
 
- async onModuleInit() {
+  async onModuleInit() {
     try {
       this.logger.log('🔗 Initializing Magic Link service...');
 
@@ -37,25 +36,40 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
 
       await this.initializeClients();
 
-      const factoryConfig = this.convertToFactoryConfig(muConfig);
-      
-      this.magicLinkService = new MagicLinkServiceImpl(
+      // ✅ Créer directement avec la config Twilio
+      this.magicLinkService = MagicLinkServiceImpl.createWithTwilio(
         this.redisClient!,
         this.keycloakClient!,
-       // factoryConfig
+        {
+          accountSid: muConfig.twilio.accountSid,
+          authToken: muConfig.twilio.authToken,
+          fromEmail: muConfig.twilio.fromEmail,
+          fromPhoneNumber: muConfig.twilio.fromPhoneNumber,
+          fromName: muConfig.twilio.fromName,
+          useEmailApi: muConfig.twilio.useEmailApi,
+          templates: muConfig.twilio.templates,
+          sandbox: muConfig.twilio.sandbox
+        },
+        {
+          enabled: muConfig.enabled,
+          tokenLength: muConfig.tokenLength,
+          expiryMinutes: muConfig.expiryMinutes,
+          maxUsesPerDay: muConfig.maxUsesPerDay,
+          requireExistingUser: muConfig.requireExistingUser,
+          autoCreateUser: muConfig.autoCreateUser
+        }
       );
       
       // Configurer les événements
       this.setupEventHandlers();
       
-      this.logger.log(`✅ Magic Link service initialized successfully with ${muConfig.email.provider}`);
+      this.logger.log(`✅ Magic Link service initialized successfully with Twilio`);
       
     } catch (error) {
       this.logger.error('❌ Failed to initialize Magic Link service:', error);
       throw error;
     }
   }
-
 
   private validateConfiguration(config: any): void {
     const errors: string[] = [];
@@ -65,22 +79,33 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
       return;
     }
     
-    if (!config.sendGrid.apiKey) {
-      errors.push('SENDGRID_API_KEY is required');
+    // ✅ Validation pour Twilio (pas SendGrid)
+    if (!config.twilio.accountSid) {
+      errors.push('TWILIO_ACCOUNT_SID is required');
     }
     
-    if (!config.sendGrid.fromEmail) {
-      errors.push('FROM_EMAIL is required');
+    if (!config.twilio.authToken) {
+      errors.push('TWILIO_AUTH_TOKEN is required');
+    }
+    
+    if (config.twilio.useEmailApi && !config.twilio.fromEmail) {
+      errors.push('TWILIO_FROM_EMAIL is required when TWILIO_USE_EMAIL_API=true');
+    }
+    
+    if (!config.twilio.useEmailApi && !config.twilio.fromPhoneNumber) {
+      errors.push('TWILIO_FROM_PHONE is required when TWILIO_USE_EMAIL_API=false');
     }
     
     if (!config.frontend.baseUrl) {
       errors.push('FRONTEND_URL is required');
     }
     
-    // Validation format email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(config.sendGrid.fromEmail)) {
-      errors.push('FROM_EMAIL format is invalid');
+    // Validation format email si utilisé
+    if (config.twilio.fromEmail) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(config.twilio.fromEmail)) {
+        errors.push('TWILIO_FROM_EMAIL format is invalid');
+      }
     }
     
     // Validation URL frontend
@@ -96,45 +121,28 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
   }
 
   private loadMagicLinkConfig(): any {
-    const provider = this.configService.get('EMAIL_PROVIDER', 'sendgrid');
-    
     return {
-      enabled: this.configService.get('MAGIC_LINK_ENABLED', true),
+      enabled: this.configService.get('MAGIC_LINK_ENABLED', 'true') !== 'false',
       tokenLength: parseInt(this.configService.get('MAGIC_LINK_TOKEN_LENGTH', '32')),
       expiryMinutes: parseInt(this.configService.get('MAGIC_LINK_EXPIRY_MINUTES', '30')),
       maxUsesPerDay: parseInt(this.configService.get('MAGIC_LINK_MAX_USES_PER_DAY', '10')),
-      requireExistingUser: this.configService.get('MAGIC_LINK_REQUIRE_EXISTING_USER', false),
-      autoCreateUser: this.configService.get('MAGIC_LINK_AUTO_CREATE_USER', true),
+      requireExistingUser: this.configService.get('MAGIC_LINK_REQUIRE_EXISTING_USER', 'false') === 'true',
+      autoCreateUser: this.configService.get('MAGIC_LINK_AUTO_CREATE_USER', 'true') !== 'false',
       
-      email: {
-        provider,
-        sendgrid: provider === 'sendgrid' ? {
-          apiKey: this.configService.get('SENDGRID_API_KEY', ''),
-          fromEmail: this.configService.get('FROM_EMAIL', 'noreply@smp-platform.com'),
-          fromName: this.configService.get('FROM_NAME', 'SMP Platform'),
-          templates: {
-            magicLink: this.configService.get('SENDGRID_TEMPLATE_MAGIC_LINK'),
-            welcome: this.configService.get('SENDGRID_TEMPLATE_WELCOME'),
-            passwordReset: this.configService.get('SENDGRID_TEMPLATE_PASSWORD_RESET'),
-            mfaCode: this.configService.get('SENDGRID_TEMPLATE_MFA_CODE')
-          },
-          sandbox: this.configService.get('NODE_ENV') !== 'production'
-        } : undefined,
-        twilio: provider === 'twilio' ? {
-          accountSid: this.configService.get('TWILIO_ACCOUNT_SID', ''),
-          authToken: this.configService.get('TWILIO_AUTH_TOKEN', ''),
-          fromPhoneNumber: this.configService.get('TWILIO_FROM_PHONE'),
-          fromEmail: this.configService.get('TWILIO_FROM_EMAIL'),
-          fromName: this.configService.get('FROM_NAME', 'SMP Platform'),
-          useEmailApi: this.configService.get('TWILIO_USE_EMAIL_API', false),
-          templates: {
-            magicLink: this.configService.get('TWILIO_TEMPLATE_MAGIC_LINK'),
-            welcome: this.configService.get('TWILIO_TEMPLATE_WELCOME'),
-            passwordReset: this.configService.get('TWILIO_TEMPLATE_PASSWORD_RESET'),
-            mfaCode: this.configService.get('TWILIO_TEMPLATE_MFA_CODE')
-          },
-          sandbox: this.configService.get('NODE_ENV') !== 'production'
-        } : undefined
+      twilio: {
+        accountSid: this.configService.get('TWILIO_ACCOUNT_SID', ''),
+        authToken: this.configService.get('TWILIO_AUTH_TOKEN', ''),
+        fromPhoneNumber: this.configService.get('TWILIO_FROM_PHONE'),
+        fromEmail: this.configService.get('TWILIO_FROM_EMAIL'),
+        fromName: this.configService.get('FROM_NAME', 'SMP Platform'),
+        useEmailApi: this.configService.get('TWILIO_USE_EMAIL_API', 'false') === 'true',
+        templates: {
+          magicLink: this.configService.get('TWILIO_TEMPLATE_MAGIC_LINK', ''),
+          welcome: this.configService.get('TWILIO_TEMPLATE_WELCOME', ''),
+          passwordReset: this.configService.get('TWILIO_TEMPLATE_PASSWORD_RESET', ''),
+          mfaCode: this.configService.get('TWILIO_TEMPLATE_MFA_CODE', '')
+        },
+        sandbox: this.configService.get('NODE_ENV') !== 'production'
       },
       
       frontend: {
@@ -149,27 +157,6 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
       }
     };
   }
-
-  private convertToFactoryConfig(muConfig: any): MagicLinkFactoryConfig {
-    return {
-      magicLink: {
-        enabled: muConfig.enabled,
-        tokenLength: muConfig.tokenLength,
-        expiryMinutes: muConfig.expiryMinutes,
-        maxUsesPerDay: muConfig.maxUsesPerDay,
-        requireExistingUser: muConfig.requireExistingUser,
-        autoCreateUser: muConfig.autoCreateUser
-      },
-      
-      email: {
-        provider: 'twilio',
-        twilio: muConfig.email.twilio
-      },
-      
-      frontend: muConfig.frontend
-    };
-  }
-
 
   private async initializeClients(): Promise<void> {
     try {
@@ -381,6 +368,7 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
       throw error;
     }
   }
+
   isEnabled(): boolean {
     return this.magicLinkService !== null;
   }
@@ -397,7 +385,7 @@ export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestro
         await this.redisClient.close();
       }
       if (this.keycloakClient) {
-        //await this.keycloakClient.close();
+        await this.keycloakClient.close();
       }
       this.logger.log('🔗 Magic Link service destroyed');
     } catch (error) {
