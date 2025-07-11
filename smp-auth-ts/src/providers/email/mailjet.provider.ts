@@ -1,9 +1,12 @@
+// smp-auth-ts/src/providers/email/mailjet.provider.ts - VERSION ES6 COMPATIBLE
 import { 
   EmailProvider, 
   EmailMessage, 
   EmailResult, 
   EmailConfig
 } from '../../interface/email.interface.js';
+import https from 'https';
+import { Buffer } from 'buffer';
 
 export interface MailjetConfig extends EmailConfig {
   apiKey: string;
@@ -27,10 +30,9 @@ export class MailjetProvider implements EmailProvider {
     this.config = {
       retryAttempts: 3,
       retryDelay: 1000,
-      timeout: 30000,
+      timeout: 60000,
       fromName: config.fromName || 'SMP Platform',
       sandbox: config.sandbox ?? (process.env.NODE_ENV !== 'production'),
-      //fromEmail: config.fromEmail,
       ...config
     };
   }
@@ -56,8 +58,6 @@ export class MailjetProvider implements EmailProvider {
     try {
       console.log(`📧 Sending email via Mailjet to: ${message.to}`);
       
-      const auth = Buffer.from(`${this.config.apiKey}:${this.config.apiSecret}`).toString('base64');
-      
       const mailData = {
         Messages: [
           {
@@ -77,40 +77,94 @@ export class MailjetProvider implements EmailProvider {
         ]
       };
 
-      const response = await fetch('https://api.mailjet.com/v3.1/send', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Basic ${auth}`
-        },
-        body: JSON.stringify(mailData)
-      });
-
-      const result = await response.json();
-
-      if (response.ok && result.Messages?.[0]?.Status === 'success') {
-        const messageId = result.Messages[0].To[0].MessageID || this.generateMessageId();
-        
-        console.log(`✅ Email sent successfully via Mailjet. Message ID: ${messageId}`);
-
-        return {
-          success: true,
-          messageId,
-          provider: 'mailjet',
-          timestamp: new Date().toISOString(),
-          metadata: {
-            messageId,
-            response: result
-          }
-        };
-      } else {
-        throw new Error(result.Messages?.[0]?.Errors?.[0]?.ErrorMessage || 'Mailjet send failed');
-      }
+      // ⭐ SOLUTION: Utiliser directement HTTPS avec imports ES6
+      const result = await this.sendEmailWithHttps(mailData);
+      return result;
 
     } catch (error) {
       console.error('❌ Mailjet provider error:', error);
       return this.handleError(error);
     }
+  }
+
+  // ⭐ MÉTHODE PRINCIPALE: HTTPS natif avec syntaxe ES6
+  private async sendEmailWithHttps(mailData: any): Promise<EmailResult> {
+    return new Promise((resolve) => {
+      console.log('📧 Sending via Mailjet HTTPS API...');
+      
+      const auth = Buffer.from(`${this.config.apiKey}:${this.config.apiSecret}`).toString('base64');
+      const postData = JSON.stringify(mailData);
+      
+      const options = {
+        hostname: 'api.mailjet.com',
+        port: 443,
+        path: '/v3.1/send',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Basic ${auth}`,
+          'Content-Length': Buffer.byteLength(postData),
+          'User-Agent': 'smp-auth-ts-es6/2.0.0',
+          'Accept': 'application/json',
+          'Connection': 'close' // ⭐ Évite les problèmes de connexion persistante
+        },
+        timeout: this.config.timeout
+      };
+
+      const req = https.request(options, (res) => {
+        let data = '';
+        
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        res.on('end', () => {
+          try {
+            console.log(`📧 Mailjet response status: ${res.statusCode}`);
+            console.log(`📧 Mailjet response data: ${data}`);
+            
+            const result = JSON.parse(data);
+            
+            if (res.statusCode === 200 && result.Messages?.[0]?.Status === 'success') {
+              const messageId = result.Messages[0].To[0].MessageID || this.generateMessageId();
+              
+              console.log(`✅ Email sent successfully via Mailjet HTTPS. Message ID: ${messageId}`);
+              
+              resolve({
+                success: true,
+                messageId,
+                provider: 'mailjet-https',
+                timestamp: new Date().toISOString(),
+                metadata: { messageId, response: result }
+              });
+            } else {
+              const errorMsg = result.Messages?.[0]?.Errors?.[0]?.ErrorMessage || `HTTP ${res.statusCode}`;
+              console.error(`❌ Mailjet API error: ${errorMsg}`);
+              
+              resolve(this.handleError(new Error(errorMsg)));
+            }
+          } catch (parseError) {
+            console.error('❌ Failed to parse Mailjet response:', parseError);
+            resolve(this.handleError(parseError));
+          }
+        });
+      });
+
+      req.on('timeout', () => {
+        console.error('❌ Mailjet request timeout');
+        req.destroy();
+        resolve(this.handleError(new Error('Request timeout')));
+      });
+
+      req.on('error', (error) => {
+        console.error('❌ Mailjet request error:', error);
+        resolve(this.handleError(error));
+      });
+
+      // Envoyer les données
+      req.write(postData);
+      req.end();
+    });
   }
 
   async sendMagicLink(email: string, token: string, options?: {
@@ -243,7 +297,7 @@ export class MailjetProvider implements EmailProvider {
   }
 
   // ============================================================================
-  // TEMPLATES (identiques au code original)
+  // TEMPLATES HTML
   // ============================================================================
 
   private async renderMagicLinkTemplate(data: {
@@ -265,42 +319,114 @@ export class MailjetProvider implements EmailProvider {
     <html>
     <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${this.getMagicLinkSubject(data.action)}</title>
         <style>
-            body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
-            .container { background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-            .button { display: inline-block; background: #007bff; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; }
-            .button:hover { background: #0056b3; }
-            .footer { margin-top: 30px; font-size: 12px; color: #666; }
+            body { 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                max-width: 600px; 
+                margin: 0 auto; 
+                padding: 20px; 
+                background: #f8fafc; 
+                color: #1a202c;
+            }
+            .container { 
+                background: white; 
+                border-radius: 12px; 
+                padding: 40px; 
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+                border: 1px solid #e2e8f0;
+            }
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            .logo {
+                font-size: 24px;
+                font-weight: bold;
+                color: #3182ce;
+                margin-bottom: 10px;
+            }
+            .button { 
+                display: inline-block; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white; 
+                padding: 16px 32px; 
+                text-decoration: none; 
+                border-radius: 8px; 
+                font-weight: 600;
+                font-size: 16px;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            }
+            .button:hover { 
+                transform: translateY(-2px);
+                box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
+            }
+            .security-box {
+                background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
+                padding: 20px;
+                border-radius: 8px;
+                margin: 25px 0;
+                border-left: 4px solid #48bb78;
+            }
+            .footer { 
+                margin-top: 30px; 
+                font-size: 12px; 
+                color: #718096;
+                border-top: 1px solid #e2e8f0;
+                padding-top: 20px;
+            }
+            .highlight {
+                background: linear-gradient(120deg, #a8edea 0%, #fed6e3 100%);
+                padding: 2px 8px;
+                border-radius: 4px;
+                font-weight: 600;
+            }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1 style="color: #333;">🔐 Secure Access Link</h1>
-            <p>Hello!</p>
-            <p>You requested a secure link to <strong>${actionText}</strong>. Click the button below to continue:</p>
+            <div class="header">
+                <div class="logo">🔐 SMP Platform</div>
+                <h1 style="color: #2d3748; margin: 0;">Secure Access Link</h1>
+            </div>
             
-            <div style="text-align: center; margin: 30px 0;">
+            <p style="font-size: 16px; line-height: 1.6;">Hello!</p>
+            <p style="font-size: 16px; line-height: 1.6;">
+                You requested a secure link to <span class="highlight">${actionText}</span>. 
+                Click the button below to continue:
+            </p>
+            
+            <div style="text-align: center; margin: 35px 0;">
                 <a href="${data.magicLinkUrl}" class="button">${this.getButtonText(data.action)}</a>
             </div>
             
-            <p><strong>⏰ ${expirationText}</strong></p>
+            <p style="text-align: center; font-weight: 600; color: #e53e3e;">
+                ⏰ ${expirationText}
+            </p>
             
-            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <h3 style="margin: 0 0 10px 0; color: #495057;">🔒 Security Info</h3>
-                <p style="margin: 0; font-size: 14px; color: #6c757d;">
-                    This link can only be used once and will expire automatically.<br>
+            <div class="security-box">
+                <h3 style="margin: 0 0 10px 0; color: #38a169; font-size: 16px;">
+                    🔒 Security Information
+                </h3>
+                <p style="margin: 0; font-size: 14px; color: #4a5568; line-height: 1.5;">
+                    This link can only be used <strong>once</strong> and will expire automatically.<br>
                     If you didn't request this, please ignore this email.
                 </p>
             </div>
             
             <div class="footer">
-                <p>Request details:</p>
-                <ul style="margin: 5px 0;">
+                <p><strong>Request details:</strong></p>
+                <ul style="margin: 5px 0; padding-left: 20px;">
                     <li>Email: ${data.email}</li>
-                    <li>IP: ${data.ip || 'Unknown'}</li>
+                    <li>IP Address: ${data.ip || 'Unknown'}</li>
                     <li>Device: ${data.userAgent ? data.userAgent.substring(0, 50) + '...' : 'Unknown'}</li>
+                    <li>Time: ${new Date().toLocaleString()}</li>
                 </ul>
+                <p style="margin-top: 15px; font-style: italic;">
+                    Need help? Contact our support team.
+                </p>
             </div>
         </div>
     </body>
@@ -333,6 +459,9 @@ Click here to continue: ${data.magicLinkUrl}
 If you didn't request this, please ignore this email.
 
 Request for: ${data.email}
+Time: ${new Date().toLocaleString()}
+
+Need help? Contact our support team.
     `.trim();
   }
 
@@ -347,6 +476,7 @@ Request for: ${data.email}
     <html>
     <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Your Verification Code</title>
         <style>
             body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
@@ -381,6 +511,7 @@ Request for: ${data.email}
     <html>
     <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Welcome to SMP Platform</title>
         <style>
             body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
