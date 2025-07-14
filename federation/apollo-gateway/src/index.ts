@@ -99,7 +99,8 @@ class FrontendSimulationAuthPlugin {
       'isRegistrationEnabled','registerUser', 'verifyEmail', 'resendVerificationEmail',
       'requestPasswordReset', 'validatePassword', 'validateUsername', 'validateEmail', 'generateUsernameSuggestions',
       'getRegistrationStatus', 'getPasswordPolicy','testRedisConnection', 'testKeycloakConnection', 'testOPAConnection',
-      'getAuthenticationStats','validateToken'
+      'getAuthenticationStats','validateToken','generateMagicLink', 'verifyMagicLink', 'initiatePasswordlessAuth',
+      'getMagicLinkStatus'
     ];
     
     if (operationName && publicOperations.includes(operationName)) {
