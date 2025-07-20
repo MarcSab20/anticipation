@@ -1,387 +1,591 @@
-// mu-auth/src/auth/services/magic-link-integration.service.ts
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { 
-  MagicLinkServiceImpl,
-  createRedisClient,
-  createKeycloakClient,
-  RedisClient,
-  KeycloakClient,
-  MagicLinkRequest,
-  MagicLinkResult,
-  MagicLinkVerificationResult
-} from 'smp-auth-ts';
+  EmailProvider, 
+  EmailMessage, 
+  EmailResult, 
+  EmailConfig
+} from '../../interface/email.interface.js';
+import https from 'https';
+import { Buffer } from 'buffer';
 
-import { EventLoggerService } from './event-logger.service';
-
-@Injectable()
-export class MagicLinkIntegrationService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(MagicLinkIntegrationService.name);
-  private magicLinkService: MagicLinkServiceImpl | null = null;
-  private redisClient: RedisClient | null = null;
-  private keycloakClient: KeycloakClient | null = null;
-  
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly eventLogger: EventLoggerService
-  ) {}
-
-  async onModuleInit() {
-    try {
-      this.logger.log('🔗 Initializing Magic Link service...');
-
-      const muConfig = this.loadMagicLinkConfig();
-
-      this.validateConfiguration(muConfig);
-
-      await this.initializeClients();
-
-      this.magicLinkService = MagicLinkServiceImpl.createWithMailjet(
-      this.redisClient!,
-      this.keycloakClient!,
-      {
-        apiKey: muConfig.mailjet.apiKey,
-        apiSecret: muConfig.mailjet.apiSecret,
-        fromEmail: muConfig.mailjet.fromEmail,
-        fromName: muConfig.mailjet.fromName,
-        templates: muConfig.mailjet.templates,
-        sandbox: muConfig.mailjet.sandbox
-      },
-      {
-        enabled: muConfig.enabled,
-        tokenLength: muConfig.tokenLength,
-        expiryMinutes: muConfig.expiryMinutes,
-        maxUsesPerDay: muConfig.maxUsesPerDay,
-        requireExistingUser: muConfig.requireExistingUser,
-        autoCreateUser: muConfig.autoCreateUser
-      }
-    );
-      
-      // Configurer les événements
-      this.setupEventHandlers();
-      
-      this.logger.log(`✅ Magic Link service initialized successfully with Twilio`);
-      
-    } catch (error) {
-      this.logger.error('❌ Failed to initialize Magic Link service:', error);
-      throw error;
-    }
-  }
-
-  private validateConfiguration(config: any): void {
-  const errors: string[] = [];
-  
-  if (!config.enabled) {
-    this.logger.warn('🔗 Magic Link is disabled');
-    return;
-  }
-  
-  // ✅ Validation pour Mailjet
-  if (!config.mailjet.apiKey) {
-    errors.push('MAILJET_API_KEY is required');
-  }
-  
-  if (!config.mailjet.apiSecret) {
-    errors.push('MAILJET_API_SECRET is required');
-  }
-  
-  if (!config.mailjet.fromEmail) {
-    errors.push('MAILJET_FROM_EMAIL is required');
-  }
-  
-  if (!config.frontend.baseUrl) {
-    errors.push('FRONTEND_URL is required');
-  }
-  
-  // Validation format email
-  if (config.mailjet.fromEmail) {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(config.mailjet.fromEmail)) {
-      errors.push('MAILJET_FROM_EMAIL format is invalid');
-    }
-  }
-  
-  // Validation URL frontend
-  try {
-    new URL(config.frontend.baseUrl);
-  } catch {
-    errors.push('FRONTEND_URL format is invalid');
-  }
-  
-  if (errors.length > 0) {
-    throw new Error(`Magic Link configuration errors: ${errors.join(', ')}`);
-  }
-}
-
-
-  private loadMagicLinkConfig(): any {
-  return {
-    enabled: this.configService.get('MAGIC_LINK_ENABLED', 'true') !== 'false',
-    tokenLength: parseInt(this.configService.get('MAGIC_LINK_TOKEN_LENGTH', '32')),
-    expiryMinutes: parseInt(this.configService.get('MAGIC_LINK_EXPIRY_MINUTES', '30')),
-    maxUsesPerDay: parseInt(this.configService.get('MAGIC_LINK_MAX_USES_PER_DAY', '10')),
-    requireExistingUser: this.configService.get('MAGIC_LINK_REQUIRE_EXISTING_USER', 'false') === 'true',
-    autoCreateUser: this.configService.get('MAGIC_LINK_AUTO_CREATE_USER', 'true') !== 'false',
-    
-    mailjet: {
-      apiKey: this.configService.get('MAILJET_API_KEY', ''),
-      apiSecret: this.configService.get('MAILJET_API_SECRET', ''),
-      fromEmail: this.configService.get('MAILJET_FROM_EMAIL', ''),
-      fromName: this.configService.get('FROM_NAME', 'SMP Platform'),
-      templates: {
-        magicLink: this.configService.get('MAILJET_TEMPLATE_MAGIC_LINK', ''),
-        welcome: this.configService.get('MAILJET_TEMPLATE_WELCOME', ''),
-        passwordReset: this.configService.get('MAILJET_TEMPLATE_PASSWORD_RESET', ''),
-        mfaCode: this.configService.get('MAILJET_TEMPLATE_MFA_CODE', '')
-      },
-      sandbox: this.configService.get('NODE_ENV') !== 'production'
-    },
-    
-    frontend: {
-      baseUrl: this.configService.get('FRONTEND_URL', 'http://localhost:3000'),
-      magicLinkPath: this.configService.get('MAGIC_LINK_PATH', '/auth/magic-link'),
-      redirectPaths: {
-        login: this.configService.get('REDIRECT_LOGIN', '/dashboard'),
-        register: this.configService.get('REDIRECT_REGISTER', '/welcome'),
-        resetPassword: this.configService.get('REDIRECT_RESET_PASSWORD', '/auth/password-reset'),
-        verifyEmail: this.configService.get('REDIRECT_VERIFY_EMAIL', '/auth/email-verified')
-      }
-    }
+export interface MailjetConfig extends EmailConfig {
+  apiKey: string;
+  apiSecret: string;
+  fromEmail: string;
+  fromName?: string;
+  templates?: {
+    magicLink: string;
+    mfaCode: string;
+    welcome: string;
+    passwordReset: string;
   };
+  sandbox?: boolean;
 }
 
-  private async initializeClients(): Promise<void> {
-    try {
-      // Configuration Redis
-      const redisConfig = {
-        host: this.configService.get('REDIS_HOST', 'localhost'),
-        port: this.configService.get('REDIS_PORT', 6379),
-        password: this.configService.get('REDIS_PASSWORD'),
-        db: this.configService.get('REDIS_DB', 0),
-        prefix: this.configService.get('REDIS_PREFIX', 'mu:auth:') + 'magic:',
-        connectTimeout: 10000,
-        commandTimeout: 5000,
-        retryAttempts: 3,
-        retryDelay: 1000
-      };
-      
-      this.redisClient = createRedisClient(redisConfig);
-      
-      // Configuration Keycloak
-      const keycloakConfig = {
-        url: this.configService.get('KEYCLOAK_URL', 'http://localhost:8080'),
-        realm: this.configService.get('KEYCLOAK_REALM', 'mu-realm'),
-        clientId: this.configService.get('KEYCLOAK_CLIENT_ID', 'mu-client'),
-        clientSecret: this.configService.get('KEYCLOAK_CLIENT_SECRET', ''),
-        timeout: this.configService.get('KEYCLOAK_TIMEOUT', 10000),
-        adminClientId: this.configService.get('KEYCLOAK_ADMIN_CLIENT_ID'),
-        adminClientSecret: this.configService.get('KEYCLOAK_ADMIN_CLIENT_SECRET'),
-        enableCache: true,
-        cacheExpiry: 3600
-      };
-      
-      this.keycloakClient = createKeycloakClient(keycloakConfig);
-      
-      this.logger.log('✅ Redis and Keycloak clients initialized');
-      
-    } catch (error) {
-      this.logger.error('❌ Failed to initialize clients:', error);
-      throw error;
-    }
+export class MailjetProvider implements EmailProvider {
+  private readonly config: MailjetConfig;
+  private isInitialized = false;
+
+  constructor(config: MailjetConfig) {
+    this.config = {
+      retryAttempts: 3,
+      retryDelay: 1000,
+      timeout: 60000,
+      fromName: config.fromName || 'SMP Platform',
+      sandbox: config.sandbox ?? (process.env.NODE_ENV !== 'production'),
+      ...config
+    };
   }
 
-  private setupEventHandlers(): void {
-    if (!this.magicLinkService) return;
-    
+  async initialize(): Promise<void> {
+    if (this.isInitialized) return;
+
+    if (!this.config.apiKey || !this.config.apiSecret) {
+      throw new Error('Mailjet API Key and Secret are required');
+    }
+
+    if (!this.config.fromEmail) {
+      throw new Error('From email is required for Mailjet');
+    }
+
+    this.isInitialized = true;
+    console.log(`📧 Mailjet provider initialized - From: ${this.config.fromEmail}`);
+  }
+
+  async sendEmail(message: EmailMessage): Promise<EmailResult> {
+    await this.initialize();
+
     try {
-      // Écouter les événements Magic Link
-      this.magicLinkService.addEventListener('magic_link_generated', async (event) => {
-        await this.eventLogger.logEvent({
-          type: 'login', // Mapper vers un type compatible
-          userId: event.userId,
-          success: true,
-          details: {
-            action: 'magic_link_generated',
-            email: event.data.email,
-            linkAction: event.data.action,
-            emailSent: event.data.emailSent,
-            correlationId: event.data.correlationId
+      console.log(`📧 Sending email via Mailjet to: ${message.to}`);
+      
+      const mailData = {
+        Messages: [
+          {
+            From: {
+              Email: this.config.fromEmail,
+              Name: this.config.fromName
+            },
+            To: [
+              {
+                Email: message.to
+              }
+            ],
+            Subject: message.subject,
+            HTMLPart: message.html,
+            TextPart: message.text
           }
+        ]
+      };
+
+      const result = await this.sendEmailWithHttps(mailData);
+      return result;
+
+    } catch (error) {
+      console.error('❌ Mailjet provider error:', error);
+      return this.handleError(error);
+    }
+  }
+  
+  private async sendEmailWithHttps(mailData: any): Promise<EmailResult> {
+    return new Promise((resolve) => {
+      console.log('📧 Sending via Mailjet HTTPS API...');
+      
+      const auth = Buffer.from(`${this.config.apiKey}:${this.config.apiSecret}`).toString('base64');
+      const postData = JSON.stringify(mailData);
+      
+      const options = {
+        hostname: 'api.mailjet.com',
+        port: 443,
+        path: '/v3.1/send',
+        method: 'POST',
+        family: 4,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Basic ${auth}`,
+          'Content-Length': Buffer.byteLength(postData),
+          'User-Agent': 'smp-auth-ts-es6/2.0.0',
+          'Accept': 'application/json',
+          'Connection': 'close' 
+        },
+        timeout: 10000
+      };
+
+      const req = https.request(options, (res) => {
+        let data = '';
+        
+        res.on('data', (chunk) => {
+          data += chunk;
         });
         
-        this.logger.debug(`🔗 Magic link generated for ${event.data.email}`);
-      });
-      
-      this.magicLinkService.addEventListener('magic_link_used', async (event) => {
-        await this.eventLogger.logEvent({
-          type: 'login',
-          userId: event.userId,
-          success: event.data.success,
-          details: {
-            action: 'magic_link_used',
-            email: event.data.email,
-            linkAction: event.data.action,
-            correlationId: event.data.correlationId
+        res.on('end', () => {
+          try {
+            console.log(`📧 Mailjet response status: ${res.statusCode}`);
+            console.log(`📧 Mailjet response data: ${data}`);
+            
+            const result = JSON.parse(data);
+            
+            if (res.statusCode === 200 && result.Messages?.[0]?.Status === 'success') {
+              const messageId = result.Messages[0].To[0].MessageID || this.generateMessageId();
+              
+              console.log(`✅ Email sent successfully via Mailjet HTTPS. Message ID: ${messageId}`);
+              
+              resolve({
+                success: true,
+                messageId,
+                provider: 'mailjet-https',
+                timestamp: new Date().toISOString(),
+                metadata: { messageId, response: result }
+              });
+            } else {
+              const errorMsg = result.Messages?.[0]?.Errors?.[0]?.ErrorMessage || `HTTP ${res.statusCode}`;
+              console.error(`❌ Mailjet API error: ${errorMsg}`);
+              
+              resolve(this.handleError(new Error(errorMsg)));
+            }
+          } catch (parseError) {
+            console.error('❌ Failed to parse Mailjet response:', parseError);
+            resolve(this.handleError(parseError));
           }
         });
-        
-        this.logger.debug(`🔗 Magic link used by ${event.data.email}`);
       });
-      
-      this.logger.log('✅ Magic Link event handlers configured');
-      
-    } catch (error) {
-      this.logger.warn('⚠️ Failed to setup event handlers:', error);
-    }
-  }
 
-  // ============================================================================
-  // MÉTHODES PUBLIQUES POUR MAGIC LINK
-  // ============================================================================
-
-  async generateMagicLink(request: {
-    email: string;
-    action?: 'login' | 'register' | 'reset_password' | 'verify_email';
-    redirectUrl?: string;
-    context?: {
-      ip?: string;
-      userAgent?: string;
-      deviceFingerprint?: string;
-      referrer?: string;
-    };
-  }): Promise<MagicLinkResult> {
-    this.ensureServiceInitialized();
-    
-    const magicLinkRequest: MagicLinkRequest = {
-      email: request.email,
-      redirectUrl: request.redirectUrl,
-      context: {
-        ...request.context,
-        action: request.action || 'login'
-      }
-    };
-    
-    try {
-      const result = await this.magicLinkService!.generateMagicLink(magicLinkRequest);
-      
-      this.logger.log(`🔗 Magic link ${result.success ? 'generated' : 'failed'} for ${request.email}`);
-      
-      return result;
-      
-    } catch (error) {
-      this.logger.error(`❌ Failed to generate magic link for ${request.email}:`, error);
-      throw error;
-    }
-  }
-
-  async verifyMagicLink(token: string): Promise<MagicLinkVerificationResult> {
-    this.ensureServiceInitialized();
-    
-    try {
-      const result = await this.magicLinkService!.verifyMagicLink(token);
-      
-      this.logger.log(`🔗 Magic link verification ${result.success ? 'successful' : 'failed'}`);
-      
-      return result;
-      
-    } catch (error) {
-      this.logger.error(`❌ Failed to verify magic link:`, error);
-      throw error;
-    }
-  }
-
-  async getMagicLinksByEmail(email: string) {
-    this.ensureServiceInitialized();
-    
-    try {
-      return await this.magicLinkService!.getUserMagicLinks(email);
-    } catch (error) {
-      this.logger.error(`❌ Failed to get magic links for ${email}:`, error);
-      return [];
-    }
-  }
-
-  async revokeMagicLink(linkId: string): Promise<void> {
-    this.ensureServiceInitialized();
-    
-    try {
-      await this.magicLinkService!.revokeMagicLink(linkId);
-      this.logger.log(`🔗 Magic link revoked: ${linkId}`);
-    } catch (error) {
-      this.logger.error(`❌ Failed to revoke magic link ${linkId}:`, error);
-      throw error;
-    }
-  }
-
-  async cleanupExpiredLinks(): Promise<number> {
-    this.ensureServiceInitialized();
-    
-    try {
-      const cleaned = await this.magicLinkService!.cleanupExpiredLinks();
-      this.logger.log(`🧹 Cleaned up ${cleaned} expired magic links`);
-      return cleaned;
-    } catch (error) {
-      this.logger.error('❌ Failed to cleanup expired links:', error);
-      return 0;
-    }
-  }
-
-  // ============================================================================
-  // MÉTHODES POUR L'AUTHENTIFICATION PASSWORDLESS
-  // ============================================================================
-
-  async initiatePasswordlessAuth(request: {
-    email: string;
-    action?: 'login' | 'register';
-    redirectUrl?: string;
-    context?: {
-      ip?: string;
-      userAgent?: string;
-      deviceFingerprint?: string;
-    };
-  }) {
-    this.ensureServiceInitialized();
-    
-    try {
-      const result = await this.magicLinkService!.initiatePasswordlessAuth({
-        identifier: request.email,
-        method: 'magic_link',
-        action: request.action || 'login',
-        redirectUrl: request.redirectUrl,
-        context: request.context
+      req.on('timeout', () => {
+        console.error('❌ Mailjet request timeout');
+        req.destroy();
+        resolve(this.handleError(new Error('Request timeout')));
       });
-      
-      this.logger.log(`🔗 Passwordless auth initiated for ${request.email}`);
-      
-      return result;
-      
-    } catch (error) {
-      this.logger.error(`❌ Failed to initiate passwordless auth for ${request.email}:`, error);
-      throw error;
+
+      req.on('error', (error) => {
+        console.error('❌ Mailjet request error:', error);
+        resolve(this.handleError(error));
+      });
+
+      req.write(postData);
+      req.end();
+    });
+  }
+
+  async sendMagicLink(email: string, token: string, options?: {
+    redirectUrl?: string;
+    action?: string;
+    expiresAt?: string;
+    userAgent?: string;
+    ip?: string;
+  }): Promise<EmailResult> {
+    const magicLinkUrl = this.buildMagicLinkUrl(token, options?.redirectUrl);
+    
+    console.log(`🔗 Sending Magic Link to ${email}`);
+    console.log(`🔗 Magic Link URL: ${magicLinkUrl}`);
+    
+    const message: EmailMessage = {
+      to: email,
+      subject: this.getMagicLinkSubject(options?.action),
+      html: await this.renderMagicLinkTemplate({
+        email,
+        magicLinkUrl,
+        action: options?.action || 'login',
+        expiresAt: options?.expiresAt,
+        userAgent: options?.userAgent,
+        ip: options?.ip
+      }),
+      text: this.renderMagicLinkText({
+        email,
+        magicLinkUrl,
+        action: options?.action || 'login',
+        expiresAt: options?.expiresAt
+      })
+    };
+    
+    return this.sendEmail(message);
+  }
+
+  async sendMFACode(email: string, code: string, options?: {
+    method?: string;
+    expiresInMinutes?: number;
+  }): Promise<EmailResult> {
+    const message: EmailMessage = {
+      to: email,
+      subject: 'Your verification code',
+      html: await this.renderMFATemplate({
+        email,
+        code,
+        method: options?.method || 'email',
+        expiresInMinutes: options?.expiresInMinutes || 5
+      }),
+      text: `Your verification code is: ${code}. Valid for ${options?.expiresInMinutes || 5} minutes.`
+    };
+    
+    return this.sendEmail(message);
+  }
+
+  async sendWelcomeEmail(email: string, options: {
+    firstName?: string;
+    lastName?: string;
+    verificationUrl?: string;
+  }): Promise<EmailResult> {
+    const message: EmailMessage = {
+      to: email,
+      subject: 'Welcome to SMP Platform',
+      html: await this.renderWelcomeTemplate({
+        email,
+        firstName: options.firstName,
+        lastName: options.lastName,
+        verificationUrl: options.verificationUrl
+      }),
+      text: this.renderWelcomeText({
+        email,
+        firstName: options.firstName,
+        lastName: options.lastName
+      })
+    };
+    
+    return this.sendEmail(message);
+  }
+
+  private buildMagicLinkUrl(token: string, redirectUrl?: string): string {
+    const baseUrl = process.env.BACKEND_URL || 'http://localhost:3001';
+    const magicLinkPath = '/auth/magic-link/verify';
+    
+    const url = new URL(magicLinkPath, baseUrl);
+    url.searchParams.set('token', token);
+    
+    if (redirectUrl) {
+      url.searchParams.set('redirect', encodeURIComponent(redirectUrl));
+    }
+    
+    return url.toString();
+  }
+
+  private getMagicLinkSubject(action?: string): string {
+    switch (action) {
+      case 'register':
+        return '🎉 Complete your registration - SMP Platform';
+      case 'reset_password':
+        return '🔑 Reset your password - SMP Platform';
+      case 'verify_email':
+        return '📧 Verify your email address - SMP Platform';
+      case 'login':
+      default:
+        return '🔐 Your secure login link - SMP Platform';
     }
   }
 
-  isEnabled(): boolean {
-    return this.magicLinkService !== null;
-  }
-
-  private ensureServiceInitialized(): void {
-    if (!this.magicLinkService) {
-      throw new Error('Magic Link service is not initialized. Check configuration and dependencies.');
+  private getActionText(action: string): string {
+    switch (action) {
+      case 'register': return 'complete your registration';
+      case 'reset_password': return 'reset your password';
+      case 'verify_email': return 'verify your email address';
+      case 'login':
+      default: return 'sign in to your account';
     }
   }
 
-  async onModuleDestroy() {
-    try {
-      if (this.redisClient) {
-        await this.redisClient.close();
+  private getButtonText(action: string): string {
+    switch (action) {
+      case 'register': return 'Complete Registration';
+      case 'reset_password': return 'Reset Password';
+      case 'verify_email': return 'Verify Email';
+      case 'login':
+      default: return 'Sign In Securely';
+    }
+  }
+
+  private async renderMagicLinkTemplate(data: {
+    email: string;
+    magicLinkUrl: string;
+    action: string;
+    expiresAt?: string;
+    userAgent?: string;
+    ip?: string;
+  }): Promise<string> {
+    const expirationText = data.expiresAt 
+      ? `This link expires on ${new Date(data.expiresAt).toLocaleString()}`
+      : 'This link expires in 30 minutes';
+
+    const actionText = this.getActionText(data.action);
+
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${this.getMagicLinkSubject(data.action)}</title>
+        <style>
+            body { 
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                max-width: 600px; 
+                margin: 0 auto; 
+                padding: 20px; 
+                background: #f8fafc; 
+                color: #1a202c;
+            }
+            .container { 
+                background: white; 
+                border-radius: 12px; 
+                padding: 40px; 
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+                border: 1px solid #e2e8f0;
+            }
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+            }
+            .logo {
+                font-size: 24px;
+                font-weight: bold;
+                color: #3182ce;
+                margin-bottom: 10px;
+            }
+            .button { 
+                display: inline-block; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white; 
+                padding: 16px 32px; 
+                text-decoration: none; 
+                border-radius: 8px; 
+                font-weight: 600;
+                font-size: 16px;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            }
+            .button:hover { 
+                transform: translateY(-2px);
+                box-shadow: 0 8px 25px rgba(102, 126, 234, 0.6);
+            }
+            .security-box {
+                background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
+                padding: 20px;
+                border-radius: 8px;
+                margin: 25px 0;
+                border-left: 4px solid #48bb78;
+            }
+            .footer { 
+                margin-top: 30px; 
+                font-size: 12px; 
+                color: #718096;
+                border-top: 1px solid #e2e8f0;
+                padding-top: 20px;
+            }
+            .highlight {
+                background: linear-gradient(120deg, #a8edea 0%, #fed6e3 100%);
+                padding: 2px 8px;
+                border-radius: 4px;
+                font-weight: 600;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <div class="logo">🔐 SMP Platform</div>
+                <h1 style="color: #2d3748; margin: 0;">Secure Access Link</h1>
+            </div>
+            
+            <p style="font-size: 16px; line-height: 1.6;">Hello!</p>
+            <p style="font-size: 16px; line-height: 1.6;">
+                You requested a secure link to <span class="highlight">${actionText}</span>. 
+                Click the button below to continue:
+            </p>
+            
+            <div style="text-align: center; margin: 35px 0;">
+                <a href="${data.magicLinkUrl}" class="button">${this.getButtonText(data.action)}</a>
+            </div>
+            
+            <p style="text-align: center; font-weight: 600; color: #e53e3e;">
+                ⏰ ${expirationText}
+            </p>
+            
+            <div class="security-box">
+                <h3 style="margin: 0 0 10px 0; color: #38a169; font-size: 16px;">
+                    🔒 Security Information
+                </h3>
+                <p style="margin: 0; font-size: 14px; color: #4a5568; line-height: 1.5;">
+                    This link can only be used <strong>once</strong> and will expire automatically.<br>
+                    If you didn't request this, please ignore this email.
+                </p>
+            </div>
+            
+            <div class="footer">
+                <p><strong>Request details:</strong></p>
+                <ul style="margin: 5px 0; padding-left: 20px;">
+                    <li>Email: ${data.email}</li>
+                    <li>IP Address: ${data.ip || 'Unknown'}</li>
+                    <li>Device: ${data.userAgent ? data.userAgent.substring(0, 50) + '...' : 'Unknown'}</li>
+                    <li>Time: ${new Date().toLocaleString()}</li>
+                </ul>
+                <!-- 🧪 LIENS DE TEST DIRECT -->
+                <div style="margin-top: 15px; padding: 10px; background: #e6fffa; border-radius: 5px;">
+                    <p style="margin: 0; font-weight: bold; color: #234e52;">🧪 Test Links:</p>
+                    <p style="margin: 5px 0; font-size: 11px;">
+                        <a href="${data.magicLinkUrl}" style="color: #065f46;">Direct Backend Link</a>
+                    </p>
+                    <p style="margin: 5px 0; font-size: 11px;">
+                        <a href="${process.env.BACKEND_URL || 'http://localhost:3001'}/test/magic-link/simulate-frontend?token=${data.magicLinkUrl.split('token=')[1]?.split('&')[0] || ''}" style="color: #065f46;">Test Simulation Link</a>
+                    </p>
+                </div>
+                <p style="margin-top: 15px; font-style: italic;">
+                    Need help? Contact our support team.
+                </p>
+            </div>
+        </div>
+    </body>
+    </html>`;
+  }
+
+  private renderMagicLinkText(data: {
+    email: string;
+    magicLinkUrl: string;
+    action: string;
+    expiresAt?: string;
+  }): string {
+    const actionText = this.getActionText(data.action);
+    const expirationText = data.expiresAt 
+      ? `Expires: ${new Date(data.expiresAt).toLocaleString()}`
+      : 'Expires in 30 minutes';
+
+    return `
+🔐 SMP Platform - Secure Access Link
+
+Hello!
+
+You requested a secure link to ${actionText}.
+
+Click here to continue: ${data.magicLinkUrl}
+
+⏰ ${expirationText}
+
+🔒 This link can only be used once and will expire automatically.
+If you didn't request this, please ignore this email.
+
+Request for: ${data.email}
+Time: ${new Date().toLocaleString()}
+
+Need help? Contact our support team.
+    `.trim();
+  }
+
+  private async renderMFATemplate(data: {
+    email: string;
+    code: string;
+    method: string;
+    expiresInMinutes: number;
+  }): Promise<string> {
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Your Verification Code</title>
+        <style>
+            body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+            .container { background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .code { font-size: 36px; font-weight: bold; text-align: center; margin: 30px 0; letter-spacing: 6px; background: #007bff; color: white; padding: 20px; border-radius: 8px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1 style="color: #333;">🔢 Verification Code</h1>
+            <p>Your verification code is:</p>
+            <div class="code">${data.code}</div>
+            <p><strong>⏰ This code expires in ${data.expiresInMinutes} minutes.</strong></p>
+            <p style="color: #666;">Enter this code in the application to continue.</p>
+        </div>
+    </body>
+    </html>`;
+  }
+
+  private async renderWelcomeTemplate(data: {
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    verificationUrl?: string;
+  }): Promise<string> {
+    const name = data.firstName 
+      ? `${data.firstName} ${data.lastName || ''}`.trim()
+      : 'New User';
+
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Welcome to SMP Platform</title>
+        <style>
+            body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+            .container { background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .button { display: inline-block; background: #28a745; color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1 style="color: #333;">🎉 Welcome to SMP Platform!</h1>
+            <p>Hello <strong>${name}</strong>!</p>
+            <p>Your account has been successfully created with email: <strong>${data.email}</strong></p>
+            ${data.verificationUrl ? `
+            <p>Please verify your email address to complete your registration:</p>
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="${data.verificationUrl}" class="button">Verify Email Address</a>
+            </div>
+            ` : ''}
+            <p>🚀 You can now access all platform features using Magic Links or traditional login.</p>
+            <p>Need help? Just reply to this email.</p>
+        </div>
+    </body>
+    </html>`;
+  }
+
+  private renderWelcomeText(data: {
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  }): string {
+    const name = data.firstName 
+      ? `${data.firstName} ${data.lastName || ''}`.trim()
+      : 'New User';
+
+    return `
+🎉 Welcome to SMP Platform!
+
+Hello ${name}!
+
+Your account has been successfully created with email: ${data.email}
+
+🚀 You can now access all platform features using Magic Links or traditional login.
+
+Need help? Just reply to this email.
+    `.trim();
+  }
+
+  private handleError(error: any): EmailResult {
+    console.error('❌ Mailjet provider error:', error);
+
+    let errorMessage = 'Unknown Mailjet error';
+    
+    if (error.message) {
+      errorMessage = error.message;
+    } else if (error.code) {
+      errorMessage = `Mailjet error code: ${error.code}`;
+    }
+
+    return {
+      success: false,
+      error: errorMessage,
+      provider: 'mailjet',
+      timestamp: new Date().toISOString(),
+      metadata: {
+        originalError: error.message,
+        config: {
+          hasApiKey: !!this.config.apiKey,
+          hasFromEmail: !!this.config.fromEmail,
+          sandbox: this.config.sandbox
+        }
       }
-      if (this.keycloakClient) {
-        await this.keycloakClient.close();
-      }
-      this.logger.log('🔗 Magic Link service destroyed');
-    } catch (error) {
-      this.logger.error('Error destroying Magic Link service:', error);
-    }
+    };
+  }
+
+  private generateMessageId(): string {
+    return `mailjet_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }

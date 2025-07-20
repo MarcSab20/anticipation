@@ -180,9 +180,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // ============================================================================
-  // GESTION DES UTILISATEURS - NOUVELLES FONCTIONS
-  // ============================================================================
+
 
   async registerUser(input: UserRegistrationInputDto): Promise<UserRegistrationResponseDto> {
     const startTime = Date.now();
@@ -552,10 +550,6 @@ private generateCorrelationId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-    // ============================================================================
-  // NOUVELLES MÉTHODES MFA
-  // ============================================================================
-
   async loginWithMFA(
     username: string, 
     password: string, 
@@ -600,9 +594,6 @@ private generateCorrelationId(): string {
     return this.extendedAuthService.getRecoveryOptions(userId);
   }
 
-  // ============================================================================
-  // NOUVELLES MÉTHODES DEVICE TRUST
-  // ============================================================================
 
   async trustDevice(userId: string, request: DeviceTrustRequest): Promise<DeviceTrustResult> {
     this.ensureInitialized();
@@ -619,10 +610,6 @@ private generateCorrelationId(): string {
     return this.extendedAuthService.revokeTrustedDevice(deviceId);
   }
 
-  // ============================================================================
-  // NOUVELLES MÉTHODES MAGIC LINK
-  // ============================================================================
-
   async generateMagicLink(request: MagicLinkRequest): Promise<MagicLinkResult> {
     this.ensureInitialized();
     return this.extendedAuthService.generateMagicLink(request);
@@ -637,10 +624,6 @@ private generateCorrelationId(): string {
     this.ensureInitialized();
     return this.extendedAuthService.initiatePasswordlessLogin(request);
   }
-
-  // ============================================================================
-  // NOUVELLES MÉTHODES DE FLOW D'AUTHENTIFICATION
-  // ============================================================================
 
   async startAuthenticationFlow(
     method: 'password' | 'magic_link' | 'passwordless',
@@ -667,11 +650,6 @@ private generateCorrelationId(): string {
     this.ensureInitialized();
     return this.extendedAuthService.loginWithOptions(options);
   }
-
-
-  // ============================================================================
-  // MÉTHODES AVEC GESTION D'ERREURS AMÉLIORÉE
-  // ============================================================================
 
   async login(username: string, password: string): Promise<AuthResponse> {
   this.ensureInitialized();
@@ -759,11 +737,6 @@ private generateCorrelationId(): string {
       // Ne pas throw pour logout, log seulement
     }
   }
-
-
-  // ============================================================================
-  // MÉTHODES AVEC FALLBACK POSTGRESQL
-  // ============================================================================
 
   async getUserInfo(userId: string): Promise<UserInfo | null> {
     this.ensureInitialized();
@@ -855,10 +828,6 @@ private generateCorrelationId(): string {
     }
   }
 
-  // ============================================================================
-  // AUTORISATION AVEC FALLBACK
-  // ============================================================================
-
   async checkPermission(
     token: string, 
     resourceId: string, 
@@ -903,10 +872,6 @@ private generateCorrelationId(): string {
     }
   }
  
-
-  // ============================================================================
-  // MÉTHODES PRIVÉES ET UTILITAIRES
-  // ============================================================================
 
   private ensureInitialized(): void {
     if (!this.isInitialized) {
@@ -1089,10 +1054,6 @@ private generateCorrelationId(): string {
 
     return Object.keys(customAttributes).length > 0 ? customAttributes : {};
   }
-
-  // ============================================================================
-  // MÉTHODES DE COMPATIBILITÉ
-  // ============================================================================
 
   async authenticateUser(username: string, password: string): Promise<{accessToken: string, refreshToken: string}> {
     const result = await this.login(username, password);
