@@ -1,4 +1,3 @@
-// smp-auth-ts/src/factories/magic-link.factory.ts
 import { MagicLinkServiceImpl } from '../services/magic-link.service.js';
 import { MagicLinkConfigImpl } from '../config/magic-link.config.js';
 import { RedisClient } from '../interface/redis.interface.js';
@@ -66,9 +65,6 @@ export class MagicLinkFactory {
     return service;
   }
 
-  /**
-   * Crée automatiquement selon le provider configuré - MISE À JOUR
-   */
   static create(
     redisClient: RedisClient,
     keycloakClient: KeycloakClient,
@@ -84,9 +80,6 @@ export class MagicLinkFactory {
     }
   }
 
-  /**
-   * Création depuis les variables d'environnement - MISE À JOUR
-   */
   static createFromEnvironment(
     redisClient: RedisClient,
     keycloakClient: KeycloakClient
@@ -123,7 +116,7 @@ export class MagicLinkFactory {
         },
         
         frontend: {
-          baseUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+          baseUrl: process.env.BACKEND_URL || 'http://localhost:3001',
           magicLinkPath: process.env.MAGIC_LINK_PATH || '/auth/magic-link',
           redirectPaths: {
             login: process.env.REDIRECT_LOGIN || '/dashboard',
@@ -137,11 +130,9 @@ export class MagicLinkFactory {
       return this.createWithMailjet(redisClient, keycloakClient, config);
     }
     
-    // Gestion du cas où le provider n'est pas supporté
     throw new Error(`Unsupported or missing email provider: ${provider}. Supported providers: mailjet`);
   }
 
-  // Validation Mailjet - NOUVEAU
   private static validateMailjetConfig(config: MagicLinkFactoryConfig): void {
     if (!config.email.mailjet) {
       throw new Error('Mailjet configuration is required');
@@ -165,7 +156,6 @@ export class MagicLinkFactory {
     }
   }
 
-  // Build config Mailjet - NOUVEAU
   private static buildFullConfigForMailjet(config: MagicLinkFactoryConfig): MagicLinkConfigImpl {
     return {
       enabled: config.magicLink?.enabled ?? true,
@@ -203,7 +193,7 @@ export class MagicLinkFactory {
       },
 
       frontend: {
-        baseUrl: config.frontend?.baseUrl || process.env.FRONTEND_URL || 'http://localhost:3000',
+        baseUrl: config.frontend?.baseUrl || process.env.BACKEND_URL || 'http://localhost:3001',
         magicLinkPath: config.frontend?.magicLinkPath || '/auth/magic-link',
         redirectPaths: {
           login: config.frontend?.redirectPaths?.login || '/dashboard',

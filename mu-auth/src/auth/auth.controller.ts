@@ -54,7 +54,7 @@ export class AuthController {
     private readonly authService: AuthService, 
     private readonly eventLogger: EventLoggerService,
     private readonly validationService: UserRegistrationValidationService,
-     private readonly magicLinkService: MagicLinkIntegrationService
+    private readonly magicLinkService: MagicLinkIntegrationService
   ) {}
 
   // ============================================================================
@@ -671,284 +671,437 @@ async setupMFA(@Body() body: MFASetupInputDto, @Headers('authorization') authHea
  * Générer un Magic Link
  */
 @Post('magic-link/generate')
-@UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-async generateMagicLink(
-  @Body() body: {
-    email: string;
-    action?: 'login' | 'register' | 'reset_password' | 'verify_email';
-    redirectUrl?: string;
-    ip?: string;
-    userAgent?: string;
-    deviceFingerprint?: string;
-    referrer?: string;
-  },
-  @Req() req?: any
-): Promise<{
-  success: boolean;
-  data?: any;
-  message?: string;
-}> {
-  try {
-    if (!this.magicLinkService.isEnabled()) {
-      return {
-        success: false,
-        message: 'Magic Link service is disabled'
-      };
-    }
-
-    this.logger.log(`🔗 Generating magic link for: ${body.email}`);
-
-    // Extraire le contexte depuis la requête
-    const context = {
-      ip: body.ip || req?.ip || req?.connection?.remoteAddress,
-      userAgent: body.userAgent || req?.get('User-Agent'),
-      deviceFingerprint: body.deviceFingerprint,
-      referrer: body.referrer || req?.get('Referer')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async generateMagicLink(
+    @Body() body: {
+      email: string;
+      action?: 'login' | 'register' | 'reset_password' | 'verify_email';
+      redirectUrl?: string;
+      ip?: string;
+      userAgent?: string;
+      deviceFingerprint?: string;
+      referrer?: string;
+    },
+    @Req() req?: any
+  ): Promise<{
+    success: boolean;
+    data?: {
+      linkId?: string;
+      message: string;
+      expiresAt?: string;
+      emailSent?: boolean;
     };
+    message?: string;
+  }> {
+    try {
+      if (!this.magicLinkService.isEnabled()) {
+        return {
+          success: false,
+          message: 'Magic Link service is disabled'
+        };
+      }
 
-    const result = await this.magicLinkService.generateMagicLink({
-      email: body.email,
-      action: body.action || 'login',
-      redirectUrl: body.redirectUrl,
-      context
-    });
+      this.logger.log(`🔗 Generating magic link for: ${body.email}`);
 
-    if (result.success) {
-      return {
-        success: true,
-        data: {
-          linkId: result.linkId,
-          message: result.message,
-          expiresAt: result.expiresAt,
-          emailSent: result.emailSent
-        }
+      // Extraire le contexte depuis la requête
+      const context = {
+        ip: body.ip || req?.ip || req?.connection?.remoteAddress || '127.0.0.1',
+        userAgent: body.userAgent || req?.get('User-Agent') || 'Unknown',
+        deviceFingerprint: body.deviceFingerprint || `device_${Date.now()}`,
+        referrer: body.referrer || req?.get('Referer'),
+        action: body.action || 'login'
       };
-    } else {
-      return {
-        success: false,
-        message: result.message
-      };
+
+      const result = await this.magicLinkService.generateMagicLink({
+        email: body.email,
+        action: body.action || 'login',
+        redirectUrl: body.redirectUrl,
+        context
+      });
+
+      if (result.success) {
+        return {
+          success: true,
+          data: {
+            linkId: result.linkId,
+            message: result.message,
+            expiresAt: result.expiresAt,
+            emailSent: result.emailSent
+          }
+        };
+      } else {
+        return {
+          success: false,
+          message: result.message || 'Failed to generate magic link'
+        };
+      }
+
+    } catch (error) {
+      this.logger.error(`❌ Failed to generate magic link for ${body.email}:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Failed to generate magic link',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
     }
-
-  } catch (error) {
-    this.logger.error(`❌ Failed to generate magic link for ${body.email}:`, error);
-    throw new HttpException(
-      {
-        success: false,
-        message: 'Failed to generate magic link',
-        error: error.message
-      },
-      HttpStatus.INTERNAL_SERVER_ERROR
-    );
   }
-}
 
 /**
  * Vérifier un Magic Link
  */
 @Post('magic-link/verify')
-@UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-async verifyMagicLink(
-  @Body() body: { token: string }
-): Promise<{
-  success: boolean;
-  data?: any;
-  message?: string;
-}> {
-  try {
-    if (!this.magicLinkService.isEnabled()) {
-      return {
-        success: false,
-        message: 'Magic Link service is disabled'
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async verifyMagicLink(
+    @Body() body: { token: string }
+  ): Promise<{
+    success: boolean;
+    data?: {
+      status: string;
+      message?: string;
+      accessToken?: string;
+      refreshToken?: string;
+      tokenType?: string;
+      expiresIn?: number;
+      requiresMFA?: boolean;
+      userInfo?: {
+        sub: string;
+        email?: string;
+        username?: string;
+        given_name?: string;
+        family_name?: string;
       };
-    }
-
-    this.logger.log(`🔗 Verifying magic link token: ${body.token.substring(0, 8)}...`);
-
-    const result = await this.magicLinkService.verifyMagicLink(body.token);
-
-    return {
-      success: result.success,
-      data: {
-        status: result.status,
-        message: result.message,
-        accessToken: result.authResponse?.access_token,
-        refreshToken: result.authResponse?.refresh_token,
-        tokenType: result.authResponse?.token_type,
-        expiresIn: result.authResponse?.expires_in,
-        requiresMFA: result.requiresMFA,
-        userInfo: result.userInfo
-      }
     };
+    message?: string;
+  }> {
+    try {
+      if (!this.magicLinkService.isEnabled()) {
+        return {
+          success: false,
+          message: 'Magic Link service is disabled'
+        };
+      }
 
-  } catch (error) {
-    this.logger.error(`❌ Failed to verify magic link:`, error);
-    throw new HttpException(
-      {
-        success: false,
-        message: 'Magic link verification failed',
-        error: error.message
-      },
-      HttpStatus.BAD_REQUEST
-    );
+      this.logger.log(`🔗 Verifying magic link token: ${body.token.substring(0, 8)}...`);
+
+      const result = await this.magicLinkService.verifyMagicLink(body.token);
+
+      if (result.success) {
+        // Structurer la réponse pour le frontend
+        const responseData = {
+          status: result.status,
+          message: result.message,
+          requiresMFA: result.requiresMFA || false
+        };
+
+        // Ajouter les tokens d'authentification si disponibles
+        if (result.authResponse) {
+          Object.assign(responseData, {
+            accessToken: result.authResponse.access_token,
+            refreshToken: result.authResponse.refresh_token,
+            tokenType: result.authResponse.token_type || 'Bearer',
+            expiresIn: result.authResponse.expires_in
+          });
+        }
+
+        // Ajouter les informations utilisateur si disponibles
+        if (result.userInfo) {
+          responseData['userInfo'] = {
+            sub: result.userInfo.sub,
+            email: result.userInfo.email,
+            username: result.userInfo.preferred_username,
+            given_name: result.userInfo.given_name,
+            family_name: result.userInfo.family_name
+          };
+        }
+
+        return {
+          success: true,
+          data: responseData
+        };
+      } else {
+        return {
+          success: false,
+          message: result.message || 'Magic link verification failed'
+        };
+      }
+
+    } catch (error) {
+      this.logger.error(`❌ Failed to verify magic link:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Magic link verification failed',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        },
+        HttpStatus.BAD_REQUEST
+      );
+    }
   }
-}
 
 /**
  * Obtenir le statut des Magic Links pour un email
  */
 @Get('magic-link/status')
-async getMagicLinkStatus(
-  @Query('email') email: string
-): Promise<{
-  success: boolean;
-  data?: any;
-  message?: string;
-}> {
-  try {
-    if (!email) {
-      throw new HttpException('Email parameter is required', HttpStatus.BAD_REQUEST);
-    }
-
-    if (!this.magicLinkService.isEnabled()) {
-      return {
-        success: false,
-        message: 'Magic Link service is disabled'
-      };
-    }
-
-    const links = await this.magicLinkService.getMagicLinksByEmail(email);
-    
-    return {
-      success: true,
-      data: {
-        email,
-        links: links.map(link => ({
-          id: link.id,
-          status: link.status,
-          action: link.action,
-          createdAt: link.createdAt,
-          expiresAt: link.expiresAt,
-          usedAt: link.usedAt
-        })),
-        count: links.length
-      }
+  async getMagicLinkStatus(
+    @Query('email') email: string
+  ): Promise<{
+    success: boolean;
+    data?: {
+      email: string;
+      links: Array<{
+        id: string;
+        status: string;
+        action: string;
+        createdAt: string;
+        expiresAt: string;
+        usedAt?: string;
+        isExpired: boolean;
+      }>;
+      count: number;
     };
+    message?: string;
+  }> {
+    try {
+      if (!email) {
+        throw new HttpException('Email parameter is required', HttpStatus.BAD_REQUEST);
+      }
 
-  } catch (error) {
-    this.logger.error(`❌ Failed to get magic link status for ${email}:`, error);
-    throw new HttpException(
-      {
-        success: false,
-        message: 'Failed to get magic link status',
-        error: error.message
-      },
-      HttpStatus.INTERNAL_SERVER_ERROR
-    );
+      if (!this.magicLinkService.isEnabled()) {
+        return {
+          success: false,
+          message: 'Magic Link service is disabled'
+        };
+      }
+
+      const links = await this.magicLinkService.getMagicLinksByEmail(email);
+      
+      return {
+        success: true,
+        data: {
+          email,
+          links: links.map(link => ({
+            id: link.id,
+            status: link.status,
+            action: link.action,
+            createdAt: link.createdAt,
+            expiresAt: link.expiresAt,
+            usedAt: link.usedAt,
+            isExpired: new Date() > new Date(link.expiresAt)
+          })),
+          count: links.length
+        }
+      };
+
+    } catch (error) {
+      this.logger.error(`❌ Failed to get magic link status for ${email}:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Failed to get magic link status',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
-}
 
 /**
  * Révoquer un Magic Link spécifique
  */
 @Delete('magic-link/:linkId')
-async revokeMagicLink(
-  @Param('linkId') linkId: string
-): Promise<{
-  success: boolean;
-  message: string;
-}> {
-  try {
-    if (!this.magicLinkService.isEnabled()) {
+  async revokeMagicLink(
+    @Param('linkId') linkId: string,
+    @Headers('authorization') authHeader?: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    try {
+      // Optionnel: Vérifier les permissions admin
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        const tokenValidation = await this.authService.validateToken(token);
+        
+        if (!tokenValidation.valid) {
+          throw new HttpException('Unauthorized', HttpStatus.UNAUTHORIZED);
+        }
+        
+        // Vérifier si l'utilisateur a les permissions admin
+        const hasAdminRole = tokenValidation.roles?.some(role => 
+          ['admin', 'super_admin'].includes(role.toLowerCase())
+        );
+        
+        if (!hasAdminRole) {
+          throw new HttpException('Insufficient permissions', HttpStatus.FORBIDDEN);
+        }
+      }
+
+      if (!this.magicLinkService.isEnabled()) {
+        return {
+          success: false,
+          message: 'Magic Link service is disabled'
+        };
+      }
+
+      await this.magicLinkService.revokeMagicLink(linkId);
+      
       return {
-        success: false,
-        message: 'Magic Link service is disabled'
+        success: true,
+        message: 'Magic Link revoked successfully'
       };
+
+    } catch (error) {
+      this.logger.error(`❌ Failed to revoke magic link ${linkId}:`, error);
+      
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Failed to revoke magic link',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        },
+        HttpStatus.BAD_REQUEST
+      );
     }
-
-    await this.magicLinkService.revokeMagicLink(linkId);
-    
-    return {
-      success: true,
-      message: 'Magic Link revoked successfully'
-    };
-
-  } catch (error) {
-    this.logger.error(`❌ Failed to revoke magic link ${linkId}:`, error);
-    throw new HttpException(
-      {
-        success: false,
-        message: 'Failed to revoke magic link',
-        error: error.message
-      },
-      HttpStatus.BAD_REQUEST
-    );
   }
-}
 
 /**
  * Initier une authentification passwordless
  */
 @Post('passwordless/initiate')
-@UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-async initiatePasswordlessAuth(
-  @Body() body: {
-    email: string;
-    action?: 'login' | 'register';
-    redirectUrl?: string;
-  },
-  @Req() req?: any
-): Promise<{
-  success: boolean;
-  data?: any;
-  message?: string;
-}> {
-  try {
-    if (!this.magicLinkService.isEnabled()) {
-      return {
-        success: false,
-        message: 'Passwordless authentication is disabled'
-      };
-    }
-
-    this.logger.log(`🔗 Initiating passwordless auth for: ${body.email}`);
-
-    const context = {
-      ip: req?.ip || req?.connection?.remoteAddress,
-      userAgent: req?.get('User-Agent'),
-      deviceFingerprint: req?.body?.deviceFingerprint
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async initiatePasswordlessAuth(
+    @Body() body: {
+      email: string;
+      action?: 'login' | 'register';
+      redirectUrl?: string;
+    },
+    @Req() req?: any
+  ): Promise<{
+    success: boolean;
+    data?: {
+      method: string;
+      linkId?: string;
+      message: string;
+      expiresAt?: string;
+      maskedDestination?: string;
     };
-
-    const result = await this.magicLinkService.initiatePasswordlessAuth({
-      email: body.email,
-      action: body.action || 'login',
-      redirectUrl: body.redirectUrl,
-      context
-    });
-
-    return {
-      success: result.success,
-      data: {
-        method: result.method,
-        linkId: result.linkId,
-        message: result.message,
-        expiresAt: result.expiresAt,
-        maskedDestination: result.maskedDestination
+    message?: string;
+  }> {
+    try {
+      if (!this.magicLinkService.isEnabled()) {
+        return {
+          success: false,
+          message: 'Passwordless authentication is disabled'
+        };
       }
-    };
 
-  } catch (error) {
-    this.logger.error(`❌ Failed to initiate passwordless auth for ${body.email}:`, error);
-    throw new HttpException(
-      {
-        success: false,
-        message: 'Failed to initiate passwordless authentication',
-        error: error.message
-      },
-      HttpStatus.INTERNAL_SERVER_ERROR
-    );
+      this.logger.log(`🔗 Initiating passwordless auth for: ${body.email}`);
+
+      const context = {
+        ip: req?.ip || req?.connection?.remoteAddress || '127.0.0.1',
+        userAgent: req?.get('User-Agent') || 'Unknown',
+        deviceFingerprint: `device_${Date.now()}`
+      };
+
+      const result = await this.magicLinkService.initiatePasswordlessAuth({
+        email: body.email,
+        action: body.action || 'login',
+        redirectUrl: body.redirectUrl,
+        context
+      });
+
+      if (result.success) {
+        return {
+          success: true,
+          data: {
+            method: result.method,
+            linkId: result.linkId,
+            message: result.message,
+            expiresAt: result.expiresAt,
+            maskedDestination: result.maskedDestination
+          }
+        };
+      } else {
+        return {
+          success: false,
+          message: result.message
+        };
+      }
+
+    } catch (error) {
+      this.logger.error(`❌ Failed to initiate passwordless auth for ${body.email}:`, error);
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Failed to initiate passwordless authentication',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
   }
-}
+
+/**
+   * Nettoyage des liens expirés - Admin endpoint
+   */
+  @Post('magic-link/cleanup')
+  async cleanupExpiredLinks(
+    @Headers('authorization') authHeader?: string
+  ): Promise<{
+    success: boolean;
+    data?: { cleanedCount: number };
+    message: string;
+  }> {
+    try {
+      // Optionnel: Vérifier les permissions admin (même logique que revokeMagicLink)
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.substring(7);
+        const tokenValidation = await this.authService.validateToken(token);
+        
+        if (!tokenValidation.valid) {
+          throw new HttpException('Unauthorized', HttpStatus.UNAUTHORIZED);
+        }
+      }
+
+      if (!this.magicLinkService.isEnabled()) {
+        return {
+          success: false,
+          message: 'Magic Link service is disabled'
+        };
+      }
+
+      const cleaned = await this.magicLinkService.cleanupExpiredLinks();
+      
+      return {
+        success: true,
+        data: { cleanedCount: cleaned },
+        message: `Cleaned up ${cleaned} expired magic links`
+      };
+
+    } catch (error) {
+      this.logger.error('❌ Failed to cleanup expired links:', error);
+      
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Failed to cleanup expired links',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
 
   // ============================================================================
   // ENDPOINT UNIFIÉ
