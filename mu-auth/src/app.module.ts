@@ -1,13 +1,14 @@
-// mu-auth/src/app.module.ts
-import { Module } from '@nestjs/common';
-import { AuthorizationModule } from './authorization/authorization.module';
+import { Module, MiddlewareConsumer } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
-import { join } from 'path';
+import { AuthorizationModule } from './authorization/authorization.module';
+import { SessionModule } from './session/session.module'; 
+import { SessionMiddleware } from './session/session.middleware'; 
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloFederationDriver, ApolloDriverConfig } from '@nestjs/apollo';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
 import { redisStore } from 'cache-manager-redis-store';
+import { join } from 'path';
 
 @Module({
   imports: [
@@ -16,7 +17,6 @@ import { redisStore } from 'cache-manager-redis-store';
       envFilePath: `.env.${process.env.NODE_ENV || 'local'}`,
     }),
     
-    // Cache NestJS simplifié (optionnel car smp-auth-ts gère son propre cache)
     CacheModule.registerAsync({
       isGlobal: true,
       imports: [ConfigModule],
@@ -44,13 +44,20 @@ import { redisStore } from 'cache-manager-redis-store';
       introspection: true,
     }),
     
-    AuthorizationModule,
     AuthModule,
+    AuthorizationModule,
+    SessionModule, 
   ],
   providers: [ConfigService],
 })
 export class AppModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(SessionMiddleware)
+      .forRoutes('*'); 
+  }
+  
   constructor() {
-    console.log('🚀 mu-auth service initialized with smp-auth-ts integration');
+    console.log('🚀 mu-auth service initialized with session management');
   }
 }
