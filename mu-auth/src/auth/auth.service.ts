@@ -43,6 +43,14 @@ import {
   RecoveryOptions
 } from 'smp-auth-ts';
 
+import { 
+  AppLoginInput, 
+  AppLoginResponse, 
+  ApplicationDetails,
+  ApplicationToken 
+} from './dto/app-authentication.dto';
+
+
 import { PostgresUserService, UserCreationData } from './services/postgres-user.service';
 import { EventLoggerService } from './services/event-logger.service';
 import { 
@@ -825,6 +833,440 @@ private generateCorrelationId(): string {
     } catch (error) {
       this.logger.error('❌ Enriched token validation failed:', error.message);
       return { valid: false };
+    }
+  }
+
+  /**
+   * 🔐 Authentification d'application via Client Credentials
+   */
+  async authenticateApp(input: AppLoginInput): Promise<AppLoginResponse> {
+  const startTime = Date.now();
+  const correlationId = this.generateCorrelationId();
+  
+  try {
+    this.logger.log(`🏢 Authenticating application: ${input.appID}`);
+    
+    // 1. Valider que l'application est autorisée
+    const applicationDetails = await this.validateApplicationCredentials(input.appID, input.appKey);
+    
+    if (!applicationDetails.isValid) {
+      this.logger.error(`❌ Invalid application credentials for ${input.appID}`);
+      
+      await this.emitApplicationEvent({
+        type: 'app_authentication_failed',
+        appID: input.appID,
+        success: false,
+        timestamp: new Date().toISOString(),
+        duration: Date.now() - startTime,
+        error: 'Invalid application credentials',
+        details: { correlationId, reason: 'INVALID_CREDENTIALS' }
+      });
+
+      return {
+        accessToken: '',
+        refreshToken: null,
+        accessValidityDuration: null,
+        refreshValidityDuration: null,
+        application: null,
+        message: 'Invalid application credentials',
+        errors: ['INVALID_APP_CREDENTIALS']
+      };
+    }
+
+    // 2. ✅ CORRECTION PRINCIPALE: Utiliser les bons credentials Keycloak
+    this.logger.log(`🔑 Getting Keycloak token with configured client credentials`);
+    
+    // ✅ UTILISER LES CREDENTIALS KEYCLOAK CONFIGURÉS, PAS L'appID
+    const keycloakClientId = this.configService.get<string>('KEYCLOAK_CLIENT_ID', 'mu-client');
+    const keycloakClientSecret = this.configService.get<string>('KEYCLOAK_CLIENT_SECRET');
+    
+    this.logger.debug(`🔍 Using Keycloak client: ${keycloakClientId}`);
+    
+    if (!keycloakClientSecret) {
+      throw new Error('KEYCLOAK_CLIENT_SECRET not configured');
+    }
+    const tokenResponse = await this.getClientsCredentialsToken(keycloakClientId, keycloakClientSecret);
+    
+
+    await this.storeApplicationToken({
+      appID: input.appID,
+      accessToken: tokenResponse.access_token,
+      refreshToken: tokenResponse.refresh_token || '',
+      expiresIn: tokenResponse.expires_in,
+      correlationId
+    });
+
+    await this.emitApplicationEvent({
+      type: 'app_authenticated',
+      appID: input.appID,
+      success: true,
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - startTime,
+      details: { 
+        correlationId,
+        tokenExpiresIn: tokenResponse.expires_in,
+        applicationName: applicationDetails.name
+      }
+    });
+
+    this.logger.log(`✅ Application authenticated successfully: ${input.appID}`);
+
+    return {
+      accessToken: tokenResponse.access_token,
+      refreshToken: tokenResponse.refresh_token || '',
+      accessValidityDuration: tokenResponse.expires_in,
+      refreshValidityDuration: tokenResponse.refresh_expires_in || tokenResponse.expires_in,
+      application: {
+        applicationID: applicationDetails.applicationID,
+        name: applicationDetails.name,
+        description: applicationDetails.description,
+        plan: applicationDetails.plan,
+        isOfficialApp: applicationDetails.isOfficialApp
+      },
+      message: 'Application authenticated successfully',
+      errors: []
+    };
+    
+  } catch (error) {
+    this.logger.error(`❌ Application authentication failed for ${input.appID}:`, error.message);
+    
+    await this.emitApplicationEvent({
+      type: 'app_authentication_failed',
+      appID: input.appID,
+      success: false,
+      timestamp: new Date().toISOString(),
+      duration: Date.now() - startTime,
+      error: error.message,
+      details: { correlationId }
+    });
+    
+    return {
+      accessToken: '',
+      refreshToken: null,
+      accessValidityDuration: null,
+      refreshValidityDuration: null,
+      application: null,
+      message: 'System error during authentication',
+      errors: ['SYSTEM_ERROR']
+    };
+  }
+}
+
+  /**
+   * 🔄 Rafraîchissement de token d'application
+   */
+  async refreshApplicationAccessToken(appID: string, refreshToken: string): Promise<AppLoginResponse> {
+    try {
+      this.logger.log(`🔄 Refreshing application token: ${appID}`);
+      
+      const tokenResponse = await this.refreshApplicationToken(appID, refreshToken);
+      
+      if (!tokenResponse.success) {
+        return {
+          accessToken: '',
+          refreshToken: null,
+          accessValidityDuration: null,
+          refreshValidityDuration: null,
+          application: null,
+          message: 'Token refresh failed',
+          errors: ['REFRESH_FAILED']
+        };
+      }
+
+      // Mettre à jour le token stocké
+      await this.updateApplicationToken(appID, {
+        accessToken: tokenResponse.accessToken,
+        refreshToken: tokenResponse.refreshToken,
+      });
+
+      return {
+        accessToken: tokenResponse.accessToken,
+        refreshToken: tokenResponse.refreshToken,
+        accessValidityDuration: tokenResponse.expiresIn,
+        refreshValidityDuration: tokenResponse.refreshExpiresIn,
+        application: null,
+        message: 'Token refreshed successfully',
+        errors: []
+      };
+      
+    } catch (error) {
+      this.logger.error(`❌ Application token refresh failed for ${appID}:`, error.message);
+      
+      return {
+        accessToken: '',
+        refreshToken: null,
+        accessValidityDuration: null,
+        refreshValidityDuration: null,
+        application: null,
+        message: 'Token refresh failed',
+        errors: ['SYSTEM_ERROR']
+      };
+    }
+  }
+
+  /**
+   * 🚪 Déconnexion d'application
+   */
+  async logoutApp(appID: string, accessToken: string): Promise<{ success: boolean; message: string }> {
+    try {
+      this.logger.log(`🚪 Logging out application: ${appID}`);
+      
+      await this.emitApplicationEvent({
+        type: 'app_logged_out',
+        appID: appID,
+        success: true,
+        timestamp: new Date().toISOString(),
+        details: { reason: 'MANUAL_LOGOUT' }
+      });
+
+      return {
+        success: true,
+        message: 'Application logged out successfully'
+      };
+      
+    } catch (error) {
+      this.logger.error(`❌ Application logout failed for ${appID}:`, error.message);
+      
+      return {
+        success: false,
+        message: 'Logout failed'
+      };
+    }
+  }
+
+  /**
+   * ✅ Validation de token d'application
+   */
+  async validateApplicationToken(accessToken: string): Promise<{
+  valid: boolean;
+  appID?: string;
+  clientId?: string;
+  scopes?: string[];
+  expiresAt?: string;
+}> {
+  try {
+    // Valider via Keycloak
+    const validation = await this.extendedAuthService.validateToken(accessToken);
+    
+    if (!validation.valid) {
+      return { valid: false };
+    }
+
+    // Récupérer les détails de l'application
+    const appDetails = await this.getApplicationByClientId(validation.clientId);
+    
+    return {
+      valid: true,
+      appID: appDetails?.appID,
+      clientId: validation.clientId,
+      scopes: Array.isArray(validation.scope) ? validation.scope : 
+              (validation.scope ? [validation.scope] : []),
+      expiresAt: validation.expiresAt
+    };
+    
+  } catch (error) {
+    this.logger.error('❌ Application token validation failed:', error.message);
+    return { valid: false };
+  }
+}
+
+  private async validateApplicationCredentials(appID: string, appKey: string): Promise<{
+    isValid: boolean;
+    applicationID: string;
+    name?: string;
+    description?: string;
+    plan?: string;
+    isOfficialApp?: boolean;
+  }> {     
+      const validApps = this.configService.get<string>('VALID_APP_IDS', '').split(',');
+      
+      return {
+        isValid: validApps.includes(appID),
+        applicationID: appID,
+        name: `App ${appID}`,
+        description: 'External Application',
+        plan: 'basic',
+        isOfficialApp: false
+      };
+    
+  }
+
+  private async getApplicationToken(appID: string, appKey: string): Promise<{
+  success: boolean;
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  refreshExpiresIn?: number;
+  error?: string;
+}> {
+  try {
+    const response = await this.getClientsCredentialsToken(appID, appKey);
+    
+    return {
+      success: true,
+      accessToken: response.access_token,
+      refreshToken: response.refresh_token || '',
+      expiresIn: response.expires_in
+    };
+    
+  } catch (error) {
+    return {
+      success: false,
+      accessToken: '',
+      refreshToken: '',
+      expiresIn: 0,
+      refreshExpiresIn: 0,
+      error: error.message
+    };
+  }
+}
+
+  private async refreshApplicationToken(appID: string, refreshToken: string): Promise<{
+    success: boolean;
+    accessToken: string;
+    refreshToken?: string;
+    expiresIn?: number;
+    refreshExpiresIn?: number;
+  }> {
+    try {
+      const response = await this.extendedAuthService.refreshToken(refreshToken);
+      
+      return {
+        success: true,
+        accessToken: response.access_token,
+        // ✅ FIX: Gérer le cas où refresh_token peut être undefined
+        refreshToken: response.refresh_token || refreshToken, // Garder l'ancien si pas de nouveau
+        expiresIn: response.expires_in
+      };
+      
+    } catch (error) {
+      return { success: false,
+        accessToken: '',
+      refreshToken: '',
+      expiresIn: 0,
+      refreshExpiresIn: 0
+       };
+    }
+  }
+
+  private async getApplicationByClientId(clientId?: string): Promise<{appID: string} | null> {
+    try {
+      if (!clientId) {
+        return null;
+      }
+      return { appID: clientId };
+      
+    } catch (error) {
+      this.logger.warn(`Failed to get application for client ${clientId}:`, error.message);
+      return null;
+    }
+  }
+
+  private async getClientsCredentialsToken(clientId: string, clientSecret: string): Promise<{
+     success: boolean; 
+    access_token: string;
+    refresh_token?: string;
+    expires_in: number;
+    refresh_expires_in?: number;
+    token_type: string;
+  }> {
+    try {
+      const keycloakUrl = this.configService.get<string>('KEYCLOAK_URL');
+      const realm = this.configService.get<string>('KEYCLOAK_REALM');
+      
+      this.logger.debug(`🔐 Requesting client credentials token for ${clientId}`);
+      
+      const params = new URLSearchParams();
+      params.append('grant_type', 'client_credentials');
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
+      
+      const response = await fetch(`${keycloakUrl}/realms/${realm}/protocol/openid-connect/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: params
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.text();
+        this.logger.error(`❌ Keycloak client credentials failed (${response.status}):`, errorData);
+        throw new Error(`Keycloak authentication failed: ${response.statusText} - ${errorData}`);
+      }
+      
+      const data = await response.json();
+      
+      this.logger.debug(`✅ Client credentials token obtained for ${clientId}`);
+      
+      return {
+        success: true,
+        access_token: data.access_token,
+        refresh_token: data.refresh_token, // Peut être undefined
+        expires_in: data.expires_in || 3600,
+        refresh_expires_in: data.refresh_expires_in,
+        token_type: data.token_type || 'Bearer'
+      };
+      
+    } catch (error) {
+      this.logger.error(`❌ Client credentials authentication failed for ${clientId}:`, error.message);
+      throw error;
+    }
+  }
+
+  private async storeApplicationToken(data: {
+    appID: string;
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: number;
+    correlationId: string;
+  }): Promise<void> {
+    try {
+      // Stocker en Redis pour un accès rapide
+      const tokenData = {
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken,
+        expiresAt: new Date(Date.now() + (data.expiresIn * 1000)).toISOString(),
+        createdAt: new Date().toISOString(),
+        correlationId: data.correlationId
+      };
+
+      
+    } catch (error) {
+      this.logger.warn(`Failed to store application token for ${data.appID}:`, error.message);
+    }
+  }
+
+  private async updateApplicationToken(appID: string, data: {
+    accessToken?: string;
+    refreshToken?: string;
+  }): Promise<void> {
+    try {
+      const tokenData = {
+        accessToken: data.accessToken,
+        refreshToken: data.refreshToken,
+        expiresAt: new Date(Date.now() + 3600).toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      
+    } catch (error) {
+      this.logger.warn(`Failed to update application token for ${appID}:`, error.message);
+    }
+  }
+
+
+  private async emitApplicationEvent(event: any): Promise<void> {
+    try {
+      await this.eventLogger.logEvent({
+        type: event.type,
+        userId: event.appID, // Utiliser appID comme userId pour les événements d'app
+        success: event.success,
+        duration: event.duration,
+        error: event.error,
+        details: event.details
+      });
+    } catch (error) {
+      this.logger.warn('Failed to emit application event:', error.message);
     }
   }
 

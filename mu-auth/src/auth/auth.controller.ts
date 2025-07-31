@@ -15,6 +15,17 @@ import {
   ValidationPipe,
   Req
 } from '@nestjs/common';
+import {
+  AppLoginInput,
+  AppLoginResponse,
+  ApplicationTokenValidationResult,
+  ApplicationLogoutResponse,
+  RefreshApplicationTokenInput,
+  ValidateApplicationTokenInput,
+  LogoutApplicationInput,
+  AppAuthRestResponse
+} from './dto/app-authentication.dto';
+
 import { AuthService } from './auth.service';
 import { EventLoggerService } from './services/event-logger.service';
 import { UserRegistrationValidationService } from './services/user-registration-validation.service';
@@ -45,6 +56,7 @@ import {
 
 import { MFAMethodType } from 'smp-auth-ts';
 import { MagicLinkIntegrationService } from './services/magic-link-integration.service';
+
 @Controller('auth')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class AuthController {
@@ -1103,10 +1115,6 @@ async setupMFA(@Body() body: MFASetupInputDto, @Headers('authorization') authHea
     }
   }
 
-  // ============================================================================
-  // ENDPOINT UNIFIÉ
-  // ============================================================================
-
   @Post('login-with-options')
   async loginWithOptions(@Body() body: LoginWithOptionsInputDto) {
     try {
@@ -1131,11 +1139,6 @@ async setupMFA(@Body() body: MFASetupInputDto, @Headers('authorization') authHea
       }, HttpStatus.UNAUTHORIZED);
     }
   }
-
-
-  // ============================================================================
-  // ENDPOINTS 
-  // ============================================================================
 
   /**
    * Validation de token
@@ -1361,6 +1364,165 @@ async setupMFA(@Body() body: MFASetupInputDto, @Headers('authorization') authHea
     }
   }
 
+  /**
+   * 🔐 Authentification d'application (REST equivalent of GraphQL authenticateApp)
+   */
+  @Post('app/authenticate')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async authenticateApplication(
+    @Body() body: AppLoginInput,
+    @Req() req?: any
+  ): Promise<AppAuthRestResponse<AppLoginResponse>> {
+    try {
+      this.logger.log(`🏢 REST: Authenticating application ${body.appID}`);
+      
+      const result = await this.authService.authenticateApp(body);
+      
+      if (result.accessToken) {
+        this.logger.log(`✅ REST: Application ${body.appID} authenticated successfully`);
+        
+        return {
+          success: true,
+          data: result,
+          message: 'Application authenticated successfully'
+        };
+      } else {
+        this.logger.warn(`❌ REST: Application ${body.appID} authentication failed:`, result.errors);
+        
+        return {
+          success: false,
+          data: result,
+          message: result.message || 'Authentication failed',
+          errors: result.errors
+        };
+      }
+      
+    } catch (error) {
+      this.logger.error(`❌ REST: Application authentication error for ${body.appID}:`, error);
+      
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Authentication failed due to system error',
+          error: error.message
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * 🔄 Rafraîchissement de token d'application
+   */
+  @Post('app/refresh-token')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async refreshApplicationToken(
+    @Body() body: RefreshApplicationTokenInput
+  ): Promise<AppAuthRestResponse<AppLoginResponse>> {
+    try {
+      this.logger.log(`🔄 REST: Refreshing token for application ${body.appID}`);
+      
+      const result = await this.authService.refreshApplicationAccessToken(body.appID, body.refreshToken);
+      
+      if (result.accessToken) {
+        this.logger.log(`✅ REST: Token refreshed for application ${body.appID}`);
+        
+        return {
+          success: true,
+          data: result,
+          message: 'Token refreshed successfully'
+        };
+      } else {
+        return {
+          success: false,
+          data: result,
+          message: result.message || 'Token refresh failed',
+          errors: result.errors
+        };
+      }
+      
+    } catch (error) {
+      this.logger.error(`❌ REST: Token refresh error for ${body.appID}:`, error);
+      
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Token refresh failed',
+          error: error.message
+        },
+        HttpStatus.BAD_REQUEST
+      );
+    }
+  }
+
+  /**
+   * 🚪 Déconnexion d'application
+   */
+  @Post('app/logout')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async logoutApplication(
+    @Body() body: LogoutApplicationInput
+  ): Promise<AppAuthRestResponse<ApplicationLogoutResponse>> {
+    try {
+      this.logger.log(`🚪 REST: Logging out application ${body.appID}`);
+      
+      const result = await this.authService.logoutApp(body.appID, body.accessToken);
+      
+      this.logger.log(`${result.success ? '✅' : '❌'} REST: Application logout result:`, result.message);
+      
+      return {
+        success: result.success,
+        data: result,
+        message: result.message
+      };
+      
+    } catch (error) {
+      this.logger.error(`❌ REST: Application logout error for ${body.appID}:`, error);
+      
+      throw new HttpException(
+        {
+          success: false,
+          message: 'Logout failed',
+          error: error.message
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * ✅ Validation de token d'application
+   */
+  @Post('app/validate-token')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async validateApplicationToken(
+    @Body() body: ValidateApplicationTokenInput
+  ): Promise<AppAuthRestResponse<ApplicationTokenValidationResult>> {
+    try {
+      const result = await this.authService.validateApplicationToken(body.accessToken);
+      
+      this.logger.debug(`${result.valid ? '✅' : '❌'} REST: Application token validation result:`, {
+        valid: result.valid,
+        appID: result.appID
+      });
+      
+      return {
+        success: true,
+        data: result,
+        message: result.valid ? 'Token is valid' : 'Token is invalid'
+      };
+      
+    } catch (error) {
+      this.logger.error('❌ REST: Application token validation error:', error);
+      
+      return {
+        success: false,
+        data: { valid: false },
+        message: 'Token validation failed',
+        errors: ['VALIDATION_ERROR']
+      };
+    }
+  }
 }
 
   

@@ -58,6 +58,16 @@ import {
   ResendVerificationInputDto,
 } from './dto/user-registration.dto';
 
+import {
+  AppLoginInput,
+  AppLoginResponse,
+  ApplicationTokenValidationResult,
+  ApplicationLogoutResponse,
+  RefreshApplicationTokenInput,
+  ValidateApplicationTokenInput,
+  LogoutApplicationInput
+} from './dto/app-authentication.dto';
+
 @Resolver()
 export class AuthResolver {
   constructor(
@@ -829,5 +839,129 @@ async trustDevice(@Args('input') input: DeviceTrustWithUserInputDto): Promise<De
       metadata: challenge.metadata
     };
   }
+
+  /**
+   * 🔐 Authentification d'application (équivalent de authenticateApp)
+   */
+  @Mutation(() => AppLoginResponse)
+  async authenticateApp(
+    @Args('input') input: AppLoginInput,
+    @Context() context?: any
+  ): Promise<AppLoginResponse> {
+    try {
+      console.log(`🏢 GraphQL: Authenticating application ${input.appID}`);
+      
+      const result = await this.authService.authenticateApp(input);
+      
+      if (result.accessToken) {
+        console.log(`✅ GraphQL: Application ${input.appID} authenticated successfully`);
+      } else {
+        console.log(`❌ GraphQL: Application ${input.appID} authentication failed:`, result.errors);
+      }
+      
+      return result;
+      
+    } catch (error) {
+      console.error(`❌ GraphQL: Application authentication error for ${input.appID}:`, error);
+      
+      return {
+        accessToken: '',
+        refreshToken: null,
+        accessValidityDuration: null,
+        refreshValidityDuration: null,
+        application: null,
+        message: 'Authentication failed due to system error',
+        errors: ['SYSTEM_ERROR']
+      };
+    }
+  }
+
+  /**
+   * 🔄 Rafraîchissement de token d'application
+   */
+  @Mutation(() => AppLoginResponse)
+  async refreshApplicationAccessToken(
+    @Args('input') input: RefreshApplicationTokenInput
+  ): Promise<AppLoginResponse> {
+    try {
+      console.log(`🔄 GraphQL: Refreshing token for application ${input.appID}`);
+      
+      const result = await this.authService.refreshApplicationAccessToken(input.appID, input.refreshToken);
+      
+      if (result.accessToken) {
+        console.log(`✅ GraphQL: Token refreshed for application ${input.appID}`);
+      } else {
+        console.log(`❌ GraphQL: Token refresh failed for application ${input.appID}`);
+      }
+      
+      return result;
+      
+    } catch (error) {
+      console.error(`❌ GraphQL: Token refresh error for ${input.appID}:`, error);
+      
+      return {
+        accessToken: '',
+        refreshToken: null,
+        accessValidityDuration: null,
+        refreshValidityDuration: null,
+        application: null,
+        message: 'Token refresh failed',
+        errors: ['SYSTEM_ERROR']
+      };
+    }
+  }
+
+  /**
+   * 🚪 Déconnexion d'application
+   */
+  @Mutation(() => ApplicationLogoutResponse)
+  async logoutApp(
+    @Args('input') input: LogoutApplicationInput
+  ): Promise<ApplicationLogoutResponse> {
+    try {
+      console.log(`🚪 GraphQL: Logging out application ${input.appID}`);
+      
+      const result = await this.authService.logoutApp(input.appID, input.accessToken);
+      
+      console.log(`${result.success ? '✅' : '❌'} GraphQL: Application logout result:`, result.message);
+      
+      return result;
+      
+    } catch (error) {
+      console.error(`❌ GraphQL: Application logout error for ${input.appID}:`, error);
+      
+      return {
+        success: false,
+        message: 'Logout failed due to system error'
+      };
+    }
+  }
+
+  /**
+   * ✅ Validation de token d'application
+   */
+  @Query(() => ApplicationTokenValidationResult)
+  async validateApplicationToken(
+    @Args('input') input: ValidateApplicationTokenInput
+  ): Promise<ApplicationTokenValidationResult> {
+    try {
+      const result = await this.authService.validateApplicationToken(input.accessToken);
+      
+      console.log(`${result.valid ? '✅' : '❌'} GraphQL: Application token validation result:`, {
+        valid: result.valid,
+        appID: result.appID
+      });
+      
+      return result;
+      
+    } catch (error) {
+      console.error('❌ GraphQL: Application token validation error:', error);
+      
+      return {
+        valid: false
+      };
+    }
+  }
+
 }
 
