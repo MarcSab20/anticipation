@@ -140,28 +140,153 @@ export class AuthResolver {
    */
   @Mutation(() => Boolean)
  
-  /**
-   * Enregistrement d'un nouvel utilisateur
-   */
-  @Mutation(() => UserRegistrationResponseDto)
-  async registerUser(
-    @Args('input') input: UserRegistrationInputDto,
-    @Context() context?: any
-  ): Promise<UserRegistrationResponseDto> {
-    // Vérifier si l'enregistrement est autorisé
-    if (!this.validationService.isRegistrationAllowed()) {
+/**
+ * 🔧 ENREGISTREMENT D'UN NOUVEL UTILISATEUR - VERSION CORRIGÉE
+ */
+@Mutation(() => UserRegistrationResponseDto)
+async registerUser(
+  @Args('input') input: UserRegistrationInputDto,
+  @Context() context?: any
+): Promise<UserRegistrationResponseDto> {
+  const startTime = Date.now();
+  const requestId = context?.req?.headers['x-request-id'] || 'unknown';
+  
+  try {
+    console.log(`🔐 [RESOLVER] Starting user registration for: ${input.username} (Request: ${requestId})`);
+    
+    // 🔧 LOGGING DÉTAILLÉ DE LA REQUÊTE
+    console.debug(`📋 [RESOLVER] Registration input:`, {
+      username: input.username,
+      email: input.email,
+      hasPassword: !!input.password,
+      firstName: input.firstName || 'N/A',
+      lastName: input.lastName || 'N/A',
+      enabled: input.enabled,
+      emailVerified: input.emailVerified,
+      hasAttributes: !!(input.attributes && Object.keys(input.attributes).length > 0),
+      requestId
+    });
+
+    // 🔧 VÉRIFICATION DES DONNÉES D'ENTRÉE STRICTE
+    if (!input.username || !input.email || !input.password) {
+      console.warn(`❌ [RESOLVER] Missing required fields for registration`, {
+        hasUsername: !!input.username,
+        hasEmail: !!input.email,
+        hasPassword: !!input.password,
+        requestId
+      });
+
       return {
         success: false,
-        message: 'User registration is currently disabled',
+        message: 'Champs obligatoires manquants (username, email, password)',
+        errors: ['MISSING_REQUIRED_FIELDS']
+      };
+    }
+
+    // 🔧 VALIDATION PRÉLIMINAIRE DES FORMATS
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(input.email)) {
+      console.warn(`❌ [RESOLVER] Invalid email format: ${input.email}`);
+      return {
+        success: false,
+        message: 'Format d\'email invalide',
+        errors: ['INVALID_EMAIL_FORMAT']
+      };
+    }
+
+    if (input.username.length < 4) {
+      console.warn(`❌ [RESOLVER] Username too short: ${input.username}`);
+      return {
+        success: false,
+        message: 'Le nom d\'utilisateur doit contenir au moins 4 caractères',
+        errors: ['USERNAME_TOO_SHORT']
+      };
+    }
+
+    if (input.password.length < 8) {
+      console.warn(`❌ [RESOLVER] Password too short for user: ${input.username}`);
+      return {
+        success: false,
+        message: 'Le mot de passe doit contenir au moins 8 caractères',
+        errors: ['PASSWORD_TOO_SHORT']
+      };
+    }
+
+    // 🔧 VÉRIFICATION DE L'AUTORISATION D'INSCRIPTION
+    if (!this.validationService.isRegistrationAllowed()) {
+      console.warn(`❌ [RESOLVER] Registration not allowed`);
+      return {
+        success: false,
+        message: 'L\'inscription est actuellement désactivée',
         errors: ['REGISTRATION_DISABLED']
       };
     }
 
-    // Nettoyer les données d'entrée
+    console.debug(`✅ [RESOLVER] Preliminary validation passed for: ${input.username}`);
+
+    // 🔧 NETTOYAGE ET NORMALISATION DES DONNÉES
     const sanitizedInput = this.validationService.sanitizeRegistrationData(input);
     
-    return await this.authService.registerUser(sanitizedInput);
+    console.debug(`🧹 [RESOLVER] Data sanitized:`, {
+      originalUsername: input.username,
+      sanitizedUsername: sanitizedInput.username,
+      originalEmail: input.email,
+      sanitizedEmail: sanitizedInput.email,
+      requestId
+    });
+
+    // 🔧 APPEL AU SERVICE AVEC GESTION D'ERREUR COMPLÈTE
+    console.debug(`🔄 [RESOLVER] Calling authService.registerUser...`);
+    
+    const result = await this.authService.registerUser(sanitizedInput);
+    
+    console.log(`📋 [RESOLVER] AuthService result for ${sanitizedInput.username}:`, {
+      success: result.success,
+      userId: result.userId,
+      message: result.message,
+      hasErrors: !!(result.errors && result.errors.length > 0),
+      errorCount: result.errors?.length || 0,
+      duration: Date.now() - startTime,
+      requestId
+    });
+
+    // 🔧 LOGGING DÉTAILLÉ DU RÉSULTAT
+    if (result.success) {
+      console.log(`✅ [RESOLVER] User registration successful: ${sanitizedInput.username} -> ${result.userId}`);
+    } else {
+      console.warn(`❌ [RESOLVER] User registration failed: ${sanitizedInput.username}`, {
+        message: result.message,
+        errors: result.errors,
+        requestId
+      });
+    }
+
+    // 🔧 RETOUR STANDARDISÉ
+    return {
+      success: result.success,
+      userId: result.userId,
+      message: result.message || (result.success ? 'Inscription réussie' : 'Échec de l\'inscription'),
+      errors: result.errors || [],
+      verificationEmailSent: result.verificationEmailSent || false
+    };
+
+  } catch (error: any) {
+    console.error(`❌ [RESOLVER] Unexpected error during registration for ${input?.username || 'unknown'}:`, {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      name: error.name,
+      requestId,
+      duration: Date.now() - startTime
+    });
+
+    // 🔧 RETOUR D'ERREUR STANDARDISÉ
+    return {
+      success: false,
+      message: 'Erreur interne lors de l\'inscription. Veuillez réessayer.',
+      errors: ['INTERNAL_RESOLVER_ERROR']
+    };
   }
+}
 
   /**
    * Vérification d'email
@@ -840,9 +965,7 @@ async trustDevice(@Args('input') input: DeviceTrustWithUserInputDto): Promise<De
     };
   }
 
-  /**
-   * 🔐 Authentification d'application (équivalent de authenticateApp)
-   */
+ 
   @Mutation(() => AppLoginResponse)
   async authenticateApp(
     @Args('input') input: AppLoginInput,
@@ -876,9 +999,6 @@ async trustDevice(@Args('input') input: DeviceTrustWithUserInputDto): Promise<De
     }
   }
 
-  /**
-   * 🔄 Rafraîchissement de token d'application
-   */
   @Mutation(() => AppLoginResponse)
   async refreshApplicationAccessToken(
     @Args('input') input: RefreshApplicationTokenInput
@@ -911,9 +1031,6 @@ async trustDevice(@Args('input') input: DeviceTrustWithUserInputDto): Promise<De
     }
   }
 
-  /**
-   * 🚪 Déconnexion d'application
-   */
   @Mutation(() => ApplicationLogoutResponse)
   async logoutApp(
     @Args('input') input: LogoutApplicationInput
@@ -937,9 +1054,6 @@ async trustDevice(@Args('input') input: DeviceTrustWithUserInputDto): Promise<De
     }
   }
 
-  /**
-   * ✅ Validation de token d'application
-   */
   @Query(() => ApplicationTokenValidationResult)
   async validateApplicationToken(
     @Args('input') input: ValidateApplicationTokenInput

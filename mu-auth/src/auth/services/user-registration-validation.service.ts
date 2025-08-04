@@ -6,7 +6,8 @@ import {
   PasswordValidationResult,
   UsernameValidationResult,
   EmailValidationResult,
-  UserRegistrationConfig
+  UserRegistrationConfig,
+  ValidationResult
 } from '../dto/user-registration.dto';
 
 @Injectable()
@@ -58,68 +59,103 @@ export class UserRegistrationValidationService {
     const suggestions: string[] = [];
     let score = 0;
 
-    // Vérification de la longueur
-    if (password.length < this.config.passwordPolicy.minLength) {
-      errors.push(`Password must be at least ${this.config.passwordPolicy.minLength} characters long`);
+    if (!password) {
+      errors.push('Le mot de passe est requis');
+      return { valid: false, errors, suggestions, score };
+    }
+
+    // Longueur minimum
+    const minLength = this.configService.get<number>('PASSWORD_MIN_LENGTH', 8);
+    if (password.length < minLength) {
+      errors.push(`Le mot de passe doit contenir au moins ${minLength} caractères`);
     } else {
       score += 20;
     }
 
-    // Vérification des caractères requis
-    if (this.config.passwordPolicy.requireUppercase && !/[A-Z]/.test(password)) {
-      errors.push('Password must contain at least one uppercase letter');
-      suggestions.push('Add an uppercase letter');
-    } else if (this.config.passwordPolicy.requireUppercase) {
-      score += 15;
+    // Longueur maximum pour éviter les attaques DoS
+    if (password.length > 128) {
+      errors.push('Le mot de passe ne peut pas dépasser 128 caractères');
     }
 
-    if (this.config.passwordPolicy.requireLowercase && !/[a-z]/.test(password)) {
-      errors.push('Password must contain at least one lowercase letter');
-      suggestions.push('Add a lowercase letter');
-    } else if (this.config.passwordPolicy.requireLowercase) {
-      score += 15;
+    // Majuscules
+    if (!/[A-Z]/.test(password)) {
+      errors.push('Le mot de passe doit contenir au moins une majuscule');
+      suggestions.push('Ajoutez une lettre majuscule (A-Z)');
+    } else {
+      score += 20;
     }
 
-    if (this.config.passwordPolicy.requireNumbers && !/\d/.test(password)) {
-      errors.push('Password must contain at least one number');
-      suggestions.push('Add a number');
-    } else if (this.config.passwordPolicy.requireNumbers) {
-      score += 15;
+    // Minuscules
+    if (!/[a-z]/.test(password)) {
+      errors.push('Le mot de passe doit contenir au moins une minuscule');
+      suggestions.push('Ajoutez une lettre minuscule (a-z)');
+    } else {
+      score += 20;
     }
 
-    if (this.config.passwordPolicy.requireSpecialChars && !/[@$!%*?&]/.test(password)) {
-      errors.push('Password must contain at least one special character (@$!%*?&)');
-      suggestions.push('Add a special character');
-    } else if (this.config.passwordPolicy.requireSpecialChars) {
-      score += 15;
+    // Chiffres
+    if (!/[0-9]/.test(password)) {
+      errors.push('Le mot de passe doit contenir au moins un chiffre');
+      suggestions.push('Ajoutez un chiffre (0-9)');
+    } else {
+      score += 20;
     }
 
-    // Vérification des motifs interdits
-    for (const pattern of this.config.passwordPolicy.forbiddenPatterns) {
-      if (pattern && password.toLowerCase().includes(pattern.toLowerCase())) {
-        errors.push(`Password cannot contain "${pattern}"`);
-      }
+    // Caractères spéciaux
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+      errors.push('Le mot de passe doit contenir au moins un caractère spécial');
+      suggestions.push('Ajoutez un caractère spécial (!@#$%^&*...)');
+    } else {
+      score += 20;
     }
 
-    // Bonus pour la complexité
-    if (password.length >= 12) score += 10;
-    if (password.length >= 16) score += 10;
-    if (/[!@#$%^&*(),.?":{}|<>]/.test(password)) score += 5;
+    // Mots de passe communs
+    const commonPasswords = [
+      'password', '123456', '123456789', 'qwerty', 'abc123',
+      'password123', 'admin', 'letmein', 'welcome', 'monkey'
+    ];
 
-    // Vérification des patterns communs
-    if (/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/.test(password)) {
-      if (this.isCommonPassword(password)) {
-        errors.push('Password is too common');
-        suggestions.push('Use a more unique password');
-        score = Math.max(0, score - 30);
-      }
+    if (commonPasswords.some(common => password.toLowerCase().includes(common))) {
+      errors.push('Le mot de passe ne doit pas contenir de mots communs');
+      score = Math.max(0, score - 40);
+    }
+
+    // Patterns faibles
+    if (/(.)\1{2,}/.test(password)) {
+      errors.push('Le mot de passe ne doit pas contenir plus de 2 caractères consécutifs identiques');
+      score = Math.max(0, score - 20);
+    }
+
+    if (/^[a-zA-Z]+$/.test(password) || /^[0-9]+$/.test(password)) {
+      errors.push('Le mot de passe ne peut pas être uniquement composé de lettres ou de chiffres');
+      score = Math.max(0, score - 30);
+    }
+
+    // Bonus pour la longueur
+    if (password.length >= 12) {
+      score += 10;
+    }
+    if (password.length >= 16) {
+      score += 10;
+    }
+
+    // Bonus pour la diversité de caractères
+    const charTypes = [
+      /[a-z]/.test(password),
+      /[A-Z]/.test(password),
+      /[0-9]/.test(password),
+      /[!@#$%^&*(),.?":{}|<>]/.test(password)
+    ].filter(Boolean).length;
+
+    if (charTypes >= 4) {
+      score += 10;
     }
 
     return {
       valid: errors.length === 0,
       errors,
-      score: Math.min(100, score),
-      suggestions
+      suggestions,
+      score: Math.min(100, Math.max(0, score))
     };
   }
 
@@ -131,85 +167,142 @@ export class UserRegistrationValidationService {
     const errors: string[] = [];
     const suggestions: string[] = [];
 
-    // Vérification de la longueur
-    if (username.length < this.config.usernamePolicy.minLength) {
-      errors.push(`Username must be at least ${this.config.usernamePolicy.minLength} characters long`);
-    }
-    if (username.length > this.config.usernamePolicy.maxLength) {
-      errors.push(`Username must be no more than ${this.config.usernamePolicy.maxLength} characters long`);
+    if (!username) {
+      errors.push('Le nom d\'utilisateur est requis');
+      return { valid: false, available: false, errors, suggestions };
     }
 
-    // Vérification des caractères autorisés
-    if (!this.config.usernamePolicy.allowedChars.test(username)) {
-      errors.push('Username can only contain letters, numbers, underscores and hyphens');
+    const cleanUsername = username.trim().toLowerCase();
+
+    // Longueur
+    if (cleanUsername.length < 4) {
+      errors.push('Le nom d\'utilisateur doit contenir au moins 4 caractères');
     }
 
-    // Vérification des noms réservés
-    if (this.config.usernamePolicy.reservedUsernames.includes(username.toLowerCase())) {
-      errors.push('Username is reserved and cannot be used');
-      suggestions.push(`Try: ${username}1, ${username}_user, my_${username}`);
+    if (cleanUsername.length > 30) {
+      errors.push('Le nom d\'utilisateur ne peut pas dépasser 30 caractères');
     }
 
-    // Vérification de la disponibilité
-    const available = await this.checkUsernameAvailability(username);
-    if (!available) {
-      suggestions.push(`Try: ${username}1, ${username}_2024, ${username}_user`);
+    // Format
+    if (!/^[a-z0-9_-]+$/.test(cleanUsername)) {
+      errors.push('Le nom d\'utilisateur ne peut contenir que des lettres minuscules, chiffres, tirets et underscores');
     }
+
+    // Caractères consécutifs
+    if (/_{2,}|^_|_$|-{2,}|^-|-$/.test(cleanUsername)) {
+      errors.push('Le nom d\'utilisateur ne peut pas commencer/finir par _ ou - ou contenir des caractères consécutifs');
+    }
+
+    // Noms réservés
+    const reservedNames = [
+      'admin', 'administrator', 'root', 'system', 'user', 'test', 'demo',
+      'api', 'www', 'mail', 'email', 'support', 'help', 'info', 'contact',
+      'null', 'undefined', 'false', 'true', 'error', 'success'
+    ];
+
+    if (reservedNames.includes(cleanUsername)) {
+      errors.push('Ce nom d\'utilisateur est réservé');
+      suggestions.push(`${cleanUsername}123`, `my_${cleanUsername}`, `${cleanUsername}_user`);
+    }
+
+    // Patterns interdits
+    const forbiddenPatterns = [
+      /^[0-9]+$/, // Seulement des chiffres
+      /admin/i,
+      /test/i,
+      /temp/i
+    ];
+
+    for (const pattern of forbiddenPatterns) {
+      if (pattern.test(cleanUsername)) {
+        errors.push('Ce format de nom d\'utilisateur n\'est pas autorisé');
+        break;
+      }
+    }
+
+    // TODO: Vérifier la disponibilité en base de données
+    // const isAvailable = await this.checkUsernameAvailability(cleanUsername);
 
     return {
       valid: errors.length === 0,
-      available,
+      available: errors.length === 0, // Temporaire - à remplacer par la vraie vérification
       errors,
       suggestions
     };
   }
+
 
   // ============================================================================
   // VALIDATION DE L'EMAIL
   // ============================================================================
 
   async validateEmail(email: string): Promise<EmailValidationResult> {
-  const errors: string[] = [];
+    const errors: string[] = [];
 
-  // Validation de base du format
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    errors.push('Invalid email format');
+    if (!email) {
+      errors.push('L\'email est requis');
+      return { valid: false, available: false, deliverable: false, errors };
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Format de base
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      errors.push('Format d\'email invalide');
+    }
+
+    // Longueur
+    if (cleanEmail.length > 254) {
+      errors.push('L\'email est trop long (maximum 254 caractères)');
+    }
+
+    // Partie locale
+    const [localPart, domain] = cleanEmail.split('@');
+    if (localPart && localPart.length > 64) {
+      errors.push('La partie locale de l\'email est trop longue (maximum 64 caractères)');
+    }
+
+    // Domaine
+    if (domain && domain.length > 253) {
+      errors.push('Le domaine de l\'email est trop long');
+    }
+
+    // Caractères interdits dans la partie locale
+    if (localPart && !/^[a-zA-Z0-9._%+-]+$/.test(localPart)) {
+      errors.push('L\'email contient des caractères non autorisés');
+    }
+
+    // Points consécutifs
+    if (localPart && /\.{2,}/.test(localPart)) {
+      errors.push('L\'email ne peut pas contenir de points consécutifs');
+    }
+
+    // Commence ou finit par un point
+    if (localPart && (localPart.startsWith('.') || localPart.endsWith('.'))) {
+      errors.push('L\'email ne peut pas commencer ou finir par un point');
+    }
+
+    // Domaines jetables basiques (à étendre)
+    const disposableDomains = [
+      '10minutemail.com', 'guerrillamail.com', 'mailinator.com',
+      'tempmail.org', 'temp-mail.org'
+    ];
+
+    if (domain && disposableDomains.includes(domain)) {
+      errors.push('Les adresses email temporaires ne sont pas autorisées');
+    }
+
+    // TODO: Vérifier la disponibilité en base de données
+    // const isAvailable = await this.checkEmailAvailability(cleanEmail);
+
     return {
-      valid: false,
-      available: false,
-      deliverable: false,
+      valid: errors.length === 0,
+      available: errors.length === 0, // Temporaire
+      deliverable: errors.length === 0, // Temporaire - à remplacer par une vraie vérification
       errors
     };
   }
-
-  const domain = email.split('@')[1].toLowerCase();
-
-  // Vérification des domaines autorisés - CORRIGER ici
-  if (this.config.emailPolicy.allowedDomains && this.config.emailPolicy.allowedDomains.length > 0) {
-    if (!this.config.emailPolicy.allowedDomains.includes(domain)) {
-      errors.push(`Email domain ${domain} is not allowed`);
-    }
-  }
-
-  // Vérification des domaines bloqués - CORRIGER ici aussi
-  if (this.config.emailPolicy.blockedDomains && this.config.emailPolicy.blockedDomains.includes(domain)) {
-    errors.push(`Email domain ${domain} is blocked`);
-  }
-
-  // Vérification de la disponibilité
-  const available = await this.checkEmailAvailability(email);
-
-  // Vérification de la délivrabilité (simulation)
-  const deliverable = await this.checkEmailDeliverability(email);
-
-  return {
-    valid: errors.length === 0,
-    available,
-    deliverable,
-    errors
-  };
-}
 
   // ============================================================================
   // MÉTHODES DE VÉRIFICATION DE DISPONIBILITÉ
@@ -270,10 +363,6 @@ export class UserRegistrationValidationService {
   // CONFIGURATION ET UTILITAIRES
   // ============================================================================
 
-  getPasswordPolicy(): UserRegistrationConfig['passwordPolicy'] {
-    return this.config.passwordPolicy;
-  }
-
   getEmailPolicy(): UserRegistrationConfig['emailPolicy'] {
     return this.config.emailPolicy;
   }
@@ -286,22 +375,17 @@ export class UserRegistrationValidationService {
     return this.config.registrationFlow;
   }
 
-  async validateRegistrationData(input: UserRegistrationInputDto): Promise<{
-    valid: boolean;
-    errors: string[];
-    warnings: string[];
-  }> {
+ async validateRegistrationData(input: UserRegistrationInputDto): Promise<ValidationResult> {
     const errors: string[] = [];
     const warnings: string[] = [];
 
     try {
+      this.logger.debug(`🔍 Validating registration data for user: ${input.username}`);
+
       // 1. Validation du nom d'utilisateur
       const usernameValidation = await this.validateUsername(input.username);
       if (!usernameValidation.valid) {
         errors.push(...usernameValidation.errors);
-      }
-      if (!usernameValidation.available) {
-        errors.push('Username is already taken');
       }
 
       // 2. Validation de l'email
@@ -309,53 +393,46 @@ export class UserRegistrationValidationService {
       if (!emailValidation.valid) {
         errors.push(...emailValidation.errors);
       }
-      if (!emailValidation.available) {
-        errors.push('Email is already registered');
-      }
-      if (!emailValidation.deliverable) {
-        warnings.push('Email deliverability could not be verified');
-      }
 
       // 3. Validation du mot de passe
       const passwordValidation = await this.validatePassword(input.password);
       if (!passwordValidation.valid) {
         errors.push(...passwordValidation.errors);
       }
-      if (passwordValidation.score < 70) {
-        warnings.push('Password strength could be improved');
-        warnings.push(...passwordValidation.suggestions);
+
+      // 4. Validation des données optionnelles
+      if (input.firstName && input.firstName.trim().length === 0) {
+        warnings.push('Le prénom est vide');
       }
 
-      // 4. Validation des données personnelles
-      if (input.firstName && input.firstName.length < 2) {
-        errors.push('First name must be at least 2 characters long');
-      }
-      if (input.lastName && input.lastName.length < 2) {
-        errors.push('Last name must be at least 2 characters long');
+      if (input.lastName && input.lastName.trim().length === 0) {
+        warnings.push('Le nom est vide');
       }
 
-      // 5. Validation des attributs personnalisés
-      if (input.attributes) {
-        const attributeValidation = this.validateAttributes(input.attributes);
-        if (!attributeValidation.valid) {
-          errors.push(...attributeValidation.errors);
-        }
+      // 5. Validation métier spécifique
+      if (input.username && input.email && input.username.toLowerCase() === input.email.split('@')[0].toLowerCase()) {
+        warnings.push('Le nom d\'utilisateur est identique à la partie locale de l\'email');
       }
 
-      console.log(`Validation completed for ${input.username}: ${errors.length} errors, ${warnings.length} warnings`);
-
-      return {
+      const result: ValidationResult = {
         valid: errors.length === 0,
         errors,
         warnings
       };
 
+      this.logger.debug(`✅ Validation completed for ${input.username}: ${result.valid ? 'VALID' : 'INVALID'}`, {
+        errorCount: errors.length,
+        warningCount: warnings.length,
+        errors: errors.length > 0 ? errors : undefined
+      });
+
+      return result;
+
     } catch (error) {
-      console.error(`Validation failed for ${input.username}:`, error);
+      this.logger.error(`❌ Error during validation for ${input.username}:`, error);
       return {
         valid: false,
-        errors: ['Validation service error'],
-        warnings: []
+        errors: ['Erreur interne lors de la validation']
       };
     }
   }
@@ -399,41 +476,58 @@ export class UserRegistrationValidationService {
     const suggestions: string[] = [];
     
     try {
-      const baseName = email.split('@')[0];
-      suggestions.push(baseName);
-      
-      if (firstName && lastName) {
-        suggestions.push(
-          `${firstName.toLowerCase()}.${lastName.toLowerCase()}`,
-          `${firstName.toLowerCase()}_${lastName.toLowerCase()}`,
-          `${firstName.toLowerCase()}${lastName.toLowerCase()}`,
-          `${firstName.charAt(0).toLowerCase()}${lastName.toLowerCase()}`
-        );
+      // Basé sur l'email
+      const emailBase = email.split('@')[0].toLowerCase();
+      if (emailBase.length >= 4) {
+        suggestions.push(emailBase);
       }
-      
-      // Ajouter des variantes avec des numéros
-      for (let i = 1; i <= 3; i++) {
-        suggestions.push(`${baseName}${i}`);
-        if (firstName && lastName) {
-          suggestions.push(`${firstName.toLowerCase()}.${lastName.toLowerCase()}${i}`);
+
+      // Basé sur le prénom
+      if (firstName && firstName.length >= 3) {
+        const firstNameClean = firstName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        suggestions.push(firstNameClean);
+        
+        if (lastName && lastName.length >= 3) {
+          const lastNameClean = lastName.toLowerCase().replace(/[^a-z0-9]/g, '');
+          suggestions.push(`${firstNameClean}_${lastNameClean}`);
+          suggestions.push(`${firstNameClean}${lastNameClean}`);
+          suggestions.push(`${firstNameClean.charAt(0)}${lastNameClean}`);
         }
       }
-      
-      // Filtrer les suggestions valides et disponibles - CORRIGER ici
-      const validSuggestions: string[] = []; // Typer explicitement le tableau
-      for (const suggestion of suggestions) {
-        const validation = await this.validateUsername(suggestion);
-        if (validation.valid && validation.available) {
-          validSuggestions.push(suggestion);
-        }
+
+      // Variations avec numéros
+      if (emailBase.length >= 4) {
+        suggestions.push(`${emailBase}123`);
+        suggestions.push(`${emailBase}_user`);
+        suggestions.push(`my_${emailBase}`);
       }
-      
-      return validSuggestions.slice(0, 5); // Limiter à 5 suggestions
-      
+
+      // Nettoyer et filtrer les suggestions
+      const cleanSuggestions = suggestions
+        .filter(s => s.length >= 4 && s.length <= 30)
+        .filter(s => /^[a-z0-9_-]+$/.test(s))
+        .slice(0, 5);
+
+      return cleanSuggestions;
+
     } catch (error) {
-      console.error('Error generating username suggestions:', error);
+      this.logger.error('Error generating username suggestions:', error);
       return [];
     }
+  }
+
+  /**
+   * 🔧 POLITIQUE DE MOT DE PASSE
+   */
+  getPasswordPolicy() {
+    return {
+      minLength: this.configService.get<number>('PASSWORD_MIN_LENGTH', 8),
+      requireUppercase: this.configService.get<boolean>('PASSWORD_REQUIRE_UPPERCASE', true),
+      requireLowercase: this.configService.get<boolean>('PASSWORD_REQUIRE_LOWERCASE', true),
+      requireNumbers: this.configService.get<boolean>('PASSWORD_REQUIRE_NUMBERS', true),
+      requireSpecialChars: this.configService.get<boolean>('PASSWORD_REQUIRE_SPECIAL', true),
+      forbiddenPatterns: []
+    };
   }
 
   /**
@@ -441,22 +535,33 @@ export class UserRegistrationValidationService {
    */
   sanitizeRegistrationData(input: UserRegistrationInputDto): UserRegistrationInputDto {
     return {
-      username: input.username.trim().toLowerCase(),
-      email: input.email.trim().toLowerCase(),
-      password: input.password, // Ne pas modifier le mot de passe
-      firstName: input.firstName?.trim(),
-      lastName: input.lastName?.trim(),
-      enabled: input.enabled !== false,
-      emailVerified: input.emailVerified || false,
-      attributes: input.attributes
+      ...input,
+      username: input.username?.trim().toLowerCase() || '',
+      email: input.email?.trim().toLowerCase() || '',
+      firstName: input.firstName?.trim() || '',
+      lastName: input.lastName?.trim() || '',
+      // Le mot de passe n'est pas modifié pour préserver l'intention de l'utilisateur
     };
   }
 
   /**
-   * Vérifie si l'enregistrement est autorisé selon la configuration
+   * 🔧 VÉRIFICATION SI L'ENREGISTREMENT EST AUTORISÉ
    */
   isRegistrationAllowed(): boolean {
-    return this.configService.get('REGISTRATION_ENABLED', true);
+    const registrationEnabled = this.configService.get<boolean>('REGISTRATION_ENABLED', true);
+    const maintenanceMode = this.configService.get<boolean>('MAINTENANCE_MODE', false);
+
+    if (maintenanceMode) {
+      this.logger.warn('Registration blocked: system in maintenance mode');
+      return false;
+    }
+
+    if (!registrationEnabled) {
+      this.logger.warn('Registration blocked: registration disabled');
+      return false;
+    }
+
+    return true;
   }
 
   /**

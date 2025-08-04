@@ -190,114 +190,271 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
 
 
 
-  async registerUser(input: UserRegistrationInputDto): Promise<UserRegistrationResponseDto> {
-    const startTime = Date.now();
-    const correlationId = this.generateCorrelationId();
+ async registerUser(input: UserRegistrationInputDto): Promise<UserRegistrationResponseDto> {
+  const startTime = Date.now();
+  const correlationId = this.generateCorrelationId();
+  
+  try {
+    this.logger.log(`🔐 Starting user registration for: ${input.username}`);
     
-    try {
-      this.logger.log(`🔐 Starting user registration for: ${input.username}`);
-      
-      // 1. Validation complète des données
-      const validationResult = await this.validationService.validateRegistrationData(input);
-      if (!validationResult.valid) {
-        await this.emitUserManagementEvent({
-          type: 'user_registered',
-          username: input.username,
-          email: input.email,
-          success: false,
-          timestamp: new Date().toISOString(),
-          duration: Date.now() - startTime,
-          error: 'Validation failed',
-          details: {
-            correlationId,
-            errors: validationResult.errors
-          }
-        });
-
-        return {
-          success: false,
-          message: 'Validation failed',
-          errors: validationResult.errors
-        };
-      }
-
-      // 2. Préparer les données pour smp-auth-ts
-      const registrationData: UserRegistrationData = {
-        username: input.username,
-        email: input.email,
-        password: input.password,
-        firstName: input.firstName,
-        lastName: input.lastName,
-        enabled: input.enabled !== false,
-        emailVerified: input.emailVerified || false,
-        attributes: input.attributes || {}
-      };
-
-      // 3. Déléguer l'enregistrement vers smp-auth-ts
-      const result = await this.extendedAuthService.registerUser(registrationData);
-      
-      if (result.success && result.userId) {
-        this.logger.log(`✅ User registered successfully: ${input.username} (ID: ${result.userId})`);
-        
-        // 4. Synchroniser vers PostgreSQL en arrière-plan
-        this.syncNewUserToPostgres(result.userId, input).catch(error => {
-          this.logger.warn(`Background PostgreSQL sync failed for user ${input.username}:`, error.message);
-        });
-
-        // 5. Émettre événement de succès
-        await this.emitUserManagementEvent({
-          type: 'user_registered',
-          userId: result.userId,
-          username: input.username,
-          email: input.email,
-          success: true,
-          timestamp: new Date().toISOString(),
-          duration: Date.now() - startTime,
-          details: {
-            correlationId,
-            registrationMethod: 'standard',
-            emailVerificationRequired: !input.emailVerified,
-            verificationEmailSent: !input.emailVerified
-          }
-        });
-
-        return {
-          success: true,
-          userId: result.userId,
-          message: input.emailVerified ? 
-            'User registered successfully' : 
-            'User registered successfully. Please check your email for verification.',
-          verificationEmailSent: !input.emailVerified
-        };
-      }
-      
+    // 🔧 VÉRIFICATIONS PRÉLIMINAIRES CORRIGÉES
+    if (!this.isInitialized) {
+      this.logger.error('❌ AuthService not initialized');
       return {
         success: false,
-        message: result.message,
-        errors: result.errors
+        message: 'Service d\'authentification non initialisé',
+        errors: ['SERVICE_NOT_INITIALIZED']
       };
-      
-    } catch (error) {
-      this.logger.error(`❌ User registration failed for ${input.username}:`, error.message);
+    }
+
+    if (!this.validationService.isRegistrationAllowed()) {
+      this.logger.warn('❌ Registration not allowed');
+      await this.emitUserManagementEvent({
+        type: 'user_registered',
+        username: input.username,
+        email: input.email,
+        success: false,
+        duration: Date.now() - startTime,
+        error: 'Registration disabled',
+        details: { correlationId, reason: 'REGISTRATION_DISABLED' }
+      });
+
+      return {
+        success: false,
+        message: 'L\'inscription est actuellement désactivée',
+        errors: ['REGISTRATION_DISABLED']
+      };
+    }
+
+    // 🔧 VALIDATION COMPLÈTE DES DONNÉES CORRIGÉE
+    this.logger.debug(`🔍 Validating registration data for: ${input.username}`);
+    const validationResult = await this.validationService.validateRegistrationData(input);
+    
+    if (!validationResult.valid) {
+      this.logger.warn(`❌ Validation failed for ${input.username}:`, validationResult.errors);
       
       await this.emitUserManagementEvent({
         type: 'user_registered',
         username: input.username,
         email: input.email,
         success: false,
-        timestamp: new Date().toISOString(),
         duration: Date.now() - startTime,
-        error: error.message,
-        details: { correlationId }
+        error: 'Validation failed',
+        details: {
+          correlationId,
+          errors: validationResult.errors,
+          warnings: validationResult.warnings
+        }
       });
-      
+
       return {
         success: false,
-        message: 'Registration failed due to system error',
-        errors: ['SYSTEM_ERROR']
+        message: 'Données invalides: ' + validationResult.errors.join(', '),
+        errors: validationResult.errors
       };
     }
+
+    this.logger.debug(`✅ Validation passed for: ${input.username}`);
+
+    // 🔧 PRÉPARATION DES DONNÉES POUR SMP-AUTH-TS CORRIGÉE
+    const registrationData: UserRegistrationData = {
+      username: input.username.toLowerCase().trim(),
+      email: input.email.toLowerCase().trim(),
+      password: input.password, // Ne pas modifier le mot de passe
+      firstName: input.firstName?.trim() || '',
+      lastName: input.lastName?.trim() || '',
+      enabled: input.enabled !== false,
+      emailVerified: input.emailVerified || false,
+    
+    };
+
+    this.logger.debug(`📤 Sending registration data to smp-auth-ts:`, {
+      username: registrationData.username,
+      email: registrationData.email,
+      firstName: registrationData.firstName,
+      lastName: registrationData.lastName,
+      enabled: registrationData.enabled,
+      emailVerified: registrationData.emailVerified,
+      attributesCount: Object.keys(registrationData.attributes || {}).length
+    });
+
+    // 🔧 APPEL VERS SMP-AUTH-TS AVEC GESTION D'ERREURS RENFORCÉE
+    let result: UserRegistrationResult;
+    
+    try {
+      this.logger.debug(`🔄 Calling extendedAuthService.registerUser...`);
+      result = await this.extendedAuthService.registerUser(registrationData);
+      
+      this.logger.debug(`📋 ExtendedAuthService response:`, {
+        success: result.success,
+        userId: result.userId,
+        message: result.message,
+        hasErrors: !!(result.errors && result.errors.length > 0)
+      });
+      
+    } catch (authServiceError: any) {
+      this.logger.error(`❌ ExtendedAuthService error for ${input.username}:`, {
+        error: authServiceError.message,
+        stack: authServiceError.stack,
+        name: authServiceError.name
+      });
+
+      // Analyser le type d'erreur pour donner un message approprié
+      let errorMessage = 'Erreur lors de l\'inscription';
+      const errorDetails = ['EXTERNAL_AUTH_SERVICE_ERROR'];
+
+      if (authServiceError.message) {
+        if (authServiceError.message.includes('already exists') || 
+            authServiceError.message.includes('duplicate') ||
+            authServiceError.message.includes('unique constraint')) {
+          errorMessage = 'Cet email ou nom d\'utilisateur est déjà utilisé';
+          errorDetails.push('DUPLICATE_USER');
+        } else if (authServiceError.message.includes('network') || 
+                   authServiceError.message.includes('timeout') ||
+                   authServiceError.message.includes('connection')) {
+          errorMessage = 'Erreur de connexion au service d\'authentification';
+          errorDetails.push('NETWORK_ERROR');
+        } else if (authServiceError.message.includes('validation') ||
+                   authServiceError.message.includes('invalid')) {
+          errorMessage = 'Données d\'inscription invalides';
+          errorDetails.push('VALIDATION_ERROR');
+        } else {
+          errorMessage = `Erreur du service d'authentification: ${authServiceError.message}`;
+        }
+      }
+
+      await this.emitUserManagementEvent({
+        type: 'user_registered',
+        username: input.username,
+        email: input.email,
+        success: false,
+        duration: Date.now() - startTime,
+        error: authServiceError.message,
+        details: { 
+          correlationId,
+          errorType: 'EXTERNAL_SERVICE_ERROR',
+          serviceName: 'smp-auth-ts'
+        }
+      });
+
+      return {
+        success: false,
+        message: errorMessage,
+        errors: errorDetails
+      };
+    }
+
+    // 🔧 TRAITEMENT DU RÉSULTAT CORRIGÉ
+    if (result.success && result.userId) {
+      this.logger.log(`✅ User registered successfully: ${input.username} (ID: ${result.userId})`);
+      
+      // 🔧 SYNCHRONISATION POSTGRESQL EN ARRIÈRE-PLAN (NON BLOQUANTE)
+      this.syncNewUserToPostgres(result.userId, input).catch(syncError => {
+        this.logger.warn(`⚠️ PostgreSQL sync failed for user ${input.username}:`, syncError.message);
+        // Ne pas faire échouer l'inscription pour une erreur de sync
+      });
+
+      // 🔧 ÉMISSION D'ÉVÉNEMENT DE SUCCÈS
+      await this.emitUserManagementEvent({
+        type: 'user_registered',
+        userId: result.userId,
+        username: input.username,
+        email: input.email,
+        success: true,
+        duration: Date.now() - startTime,
+        details: {
+          correlationId,
+          registrationMethod: 'standard',
+          emailVerificationRequired: !input.emailVerified,
+          verificationEmailSent: !input.emailVerified
+        }
+      });
+
+      return {
+        success: true,
+        userId: result.userId,
+        message: input.emailVerified ? 
+          'Utilisateur créé avec succès' : 
+          'Utilisateur créé avec succès. Vérifiez votre email pour activer votre compte.',
+        verificationEmailSent: !input.emailVerified
+      };
+      
+    } else {
+      // 🔧 GESTION DES ÉCHECS DE SMP-AUTH-TS AMÉLIORÉE
+      this.logger.warn(`❌ Registration failed for ${input.username}:`, {
+        success: result.success,
+        message: result.message,
+        errors: result.errors,
+        userId: result.userId
+      });
+
+      let errorMessage = result.message || 'Échec de l\'inscription';
+      let errorCodes = result.errors || ['REGISTRATION_FAILED'];
+
+      // Analyser les erreurs retournées par smp-auth-ts
+      if (result.errors && result.errors.length > 0) {
+        const errorString = result.errors.join(' ').toLowerCase();
+        
+        if (errorString.includes('already exists') || errorString.includes('duplicate')) {
+          errorMessage = 'Cet email ou nom d\'utilisateur est déjà utilisé';
+          errorCodes = ['DUPLICATE_USER'];
+        } else if (errorString.includes('invalid') || errorString.includes('validation')) {
+          errorMessage = 'Données d\'inscription invalides';
+          errorCodes = ['VALIDATION_ERROR'];
+        } else if (errorString.includes('disabled') || errorString.includes('forbidden')) {
+          errorMessage = 'L\'inscription n\'est pas autorisée';
+          errorCodes = ['REGISTRATION_FORBIDDEN'];
+        }
+      }
+
+      await this.emitUserManagementEvent({
+        type: 'user_registered',
+        username: input.username,
+        email: input.email,
+        success: false,
+        duration: Date.now() - startTime,
+        error: errorMessage,
+        details: {
+          correlationId,
+          smpAuthErrors: result.errors,
+          smpAuthMessage: result.message
+        }
+      });
+
+      return {
+        success: false,
+        message: errorMessage,
+        errors: errorCodes
+      };
+    }
+    
+  } catch (error: any) {
+    this.logger.error(`❌ Unexpected error during registration for ${input.username}:`, {
+      error: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    
+    await this.emitUserManagementEvent({
+      type: 'user_registered',
+      username: input.username,
+      email: input.email,
+      success: false,
+      duration: Date.now() - startTime,
+      error: error.message,
+      details: { 
+        correlationId,
+        errorType: 'UNEXPECTED_ERROR'
+      }
+    });
+    
+    return {
+      success: false,
+      message: 'Erreur interne lors de l\'inscription. Veuillez réessayer.',
+      errors: ['INTERNAL_ERROR']
+    };
   }
+}
 
   /**
    * Vérification d'email
@@ -506,35 +663,44 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async syncNewUserToPostgres(userId: string, input: UserRegistrationInputDto): Promise<void> {
-    try {
-      const userData: UserCreationData = {
-        username: input.username,
-        email: input.email,
-        emailVerified: input.emailVerified || false,  // ✅ Correction
-        firstName: input.firstName,
-        lastName: input.lastName,
-        enabled: input.enabled !== false,
-        keycloakId: userId,
-        state: 'ACTIVE',
-        
-        // Valeurs par défaut
-        clearanceLevel: 1,
-        hierarchyLevel: 1,
-        employmentType: 'PERMANENT',
-        verificationStatus: 'PENDING',
-        riskScore: 0,
-        technicalExpertise: [],
-        certifications: [],
-        customAttributes: input.attributes || {}
-      };
-
-      await this.postgresUserService.createUser(userData);
-      this.logger.debug(`✅ User synced to PostgreSQL: ${input.username}`);
+  try {
+    this.logger.debug(`🔄 Syncing user to PostgreSQL: ${userId}`);
+    
+    const userData: UserCreationData = {
+      username: input.username.toLowerCase().trim(),
+      email: input.email.toLowerCase().trim(),
+      emailVerified: input.emailVerified || false,
+      firstName: input.firstName?.trim() || '',
+      lastName: input.lastName?.trim() || '',
+      enabled: input.enabled !== false,
+      keycloakId: userId,
+      state: 'ACTIVE',
       
-    } catch (error) {
-      this.logger.warn(`⚠️ Failed to sync user to PostgreSQL:`, error.message);
-    }
+      // Valeurs par défaut sécurisées
+      clearanceLevel: 1,
+      hierarchyLevel: 1,
+      employmentType: 'PERMANENT',
+      verificationStatus: input.emailVerified ? 'VERIFIED' : 'PENDING',
+      riskScore: 0,
+      technicalExpertise: [],
+      certifications: [],
+    };
+
+    await this.postgresUserService.createUser(userData);
+    this.logger.debug(`✅ User synced to PostgreSQL successfully: ${input.username}`);
+    
+  } catch (syncError: any) {
+    // Log l'erreur mais ne pas faire échouer l'inscription
+    this.logger.warn(`⚠️ PostgreSQL sync failed for user ${userId}:`, {
+      error: syncError.message,
+      username: input.username,
+      email: input.email
+    });
+    
+    // Optionnel: Programmer une nouvelle tentative de sync
+    // this.scheduleRetrySync(userId, input);
   }
+}
 
   private async emitUserManagementEvent(event: any): Promise<void> {
     try {

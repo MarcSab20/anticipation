@@ -1,4 +1,3 @@
-// smp-auth-ts/src/services/magic-link.service.ts - Version avec Mailjet
 import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import {
   MagicLinkService,
@@ -178,7 +177,6 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
         ...magicLink.metadata,
       };
       
-      // Ajouter messageId seulement si fourni
       if (emailResult.messageId) {
         (magicLink.metadata as any).emailMessageId = emailResult.messageId;
       }
@@ -341,7 +339,6 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
     }
 
     try {
-      // Récupérer les informations utilisateur
       const userInfo = await this.keycloakClient.getUserInfo(magicLink.userId);
       if (!userInfo) {
         return {
@@ -351,7 +348,6 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
         };
       }
 
-      // Générer un token d'accès
       const authResponse = await this.keycloakClient.getClientCredentialsToken!();
 
       console.log(`✅ Login successful for user: ${userInfo.preferred_username}`);
@@ -414,7 +410,6 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
       
       const authResponse = await this.keycloakClient.getClientCredentialsToken!();
 
-      // Envoyer email de bienvenue via Mailjet
       await this.sendWelcomeEmail(magicLink.email, userInfo?.given_name, userInfo?.family_name);
 
       return {
@@ -498,7 +493,6 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
         userInfo: {
           sub: magicLink.userId || '',
           email: magicLink.email,
-          // Informations minimales pour le reset
         } as any
       };
     } catch (error) {
@@ -586,7 +580,6 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
       { ttl: this.config.expiryMinutes! * 60 }
     );
 
-    // Indexer par email pour la gestion
     await this.redisClient.sAdd(`magic_link:email:${magicLink.email}`, magicLink.id);
     await this.redisClient.expire(`magic_link:email:${magicLink.email}`, this.config.expiryMinutes! * 60);
   }
@@ -617,31 +610,26 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
       return false;
     }
 
-    // Vérifier que le lien n'a pas expiré
     if (new Date() > new Date(magicLink.expiresAt)) {
       console.error(`❌ Magic link expired: ${linkId}`);
       await this.updateLinkStatus(linkId, 'expired');
       return false;
     }
 
-    // Vérifier que le lien n'a pas déjà été utilisé
     if (magicLink.status === 'used' || magicLink.status === 'revoked') {
       console.error(`❌ Magic link already used or revoked: ${linkId}`);
       return false;
     }
 
-    // Envoyer l'email avec Mailjet
     const emailResult = await this.sendMagicLinkEmail(magicLink);
 
     if (emailResult.success) {
       console.log(`✅ Magic link email resent successfully via Mailjet: ${linkId}`);
       
-      // Marquer la dernière fois que l'email a été envoyé
       magicLink.metadata = {
         ...magicLink.metadata
       };
       
-      // Ajouter lastEmailSentAt comme propriété étendue
       (magicLink.metadata as any).lastEmailSentAt = new Date().toISOString();
       
       await this.updateMagicLink(magicLink);
@@ -798,7 +786,6 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
       adminRoles.some(adminRole => role.toLowerCase().includes(adminRole))
     );
     
-    // MFA requis pour les administrateurs ou selon les attributs utilisateur
     const riskScoreRequiresMFA = userInfo.attributes?.riskScore != null && userInfo.attributes.riskScore > 50;
     
     return hasAdminRole || riskScoreRequiresMFA;
@@ -822,11 +809,10 @@ export class MagicLinkServiceImpl implements MagicLinkService, PasswordlessAuthS
       }
     }
 
-    // Logger l'événement dans Redis pour l'audit
     await this.redisClient.set(
       `magic_link:event:${fullEvent.id}`,
       JSON.stringify(fullEvent),
-      { ttl: 86400 * 30 } // 30 jours
+      { ttl: 86400 * 30 } 
     );
   }
 

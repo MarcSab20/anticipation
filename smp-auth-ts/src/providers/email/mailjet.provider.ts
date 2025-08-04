@@ -1,4 +1,3 @@
-// smp-auth-ts/src/providers/email/mailjet.provider.ts - VERSION ES6 COMPATIBLE
 import { 
   EmailProvider, 
   EmailMessage, 
@@ -77,7 +76,6 @@ export class MailjetProvider implements EmailProvider {
         ]
       };
 
-      // ⭐ SOLUTION: Utiliser directement HTTPS avec imports ES6
       const result = await this.sendEmailWithHttps(mailData);
       return result;
 
@@ -161,7 +159,6 @@ export class MailjetProvider implements EmailProvider {
         resolve(this.handleError(error));
       });
 
-      // Envoyer les données
       req.write(postData);
       req.end();
     });
@@ -244,13 +241,9 @@ export class MailjetProvider implements EmailProvider {
     return this.sendEmail(message);
   }
 
-  // ============================================================================
-  // MÉTHODES UTILITAIRES
-  // ============================================================================
-
   private buildMagicLinkUrl(token: string, redirectUrl?: string): string {
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const magicLinkPath = '/auth/magic-link';
+    const baseUrl = process.env.BACKEND_URL || 'http://localhost:3001';
+    const magicLinkPath = '/auth/magic-link/verify';
     
     const url = new URL(magicLinkPath, baseUrl);
     url.searchParams.set('token', token);
@@ -295,10 +288,6 @@ export class MailjetProvider implements EmailProvider {
       default: return 'Sign In Securely';
     }
   }
-
-  // ============================================================================
-  // TEMPLATES HTML
-  // ============================================================================
 
   private async renderMagicLinkTemplate(data: {
     email: string;
@@ -424,6 +413,16 @@ export class MailjetProvider implements EmailProvider {
                     <li>Device: ${data.userAgent ? data.userAgent.substring(0, 50) + '...' : 'Unknown'}</li>
                     <li>Time: ${new Date().toLocaleString()}</li>
                 </ul>
+                <!-- 🧪 LIENS DE TEST DIRECT -->
+                <div style="margin-top: 15px; padding: 10px; background: #e6fffa; border-radius: 5px;">
+                    <p style="margin: 0; font-weight: bold; color: #234e52;">🧪 Test Links:</p>
+                    <p style="margin: 5px 0; font-size: 11px;">
+                        <a href="${data.magicLinkUrl}" style="color: #065f46;">Direct Backend Link</a>
+                    </p>
+                    <p style="margin: 5px 0; font-size: 11px;">
+                        <a href="${process.env.BACKEND_URL || 'http://localhost:3001'}/test/magic-link/simulate-frontend?token=${data.magicLinkUrl.split('token=')[1]?.split('&')[0] || ''}" style="color: #065f46;">Test Simulation Link</a>
+                    </p>
+                </div>
                 <p style="margin-top: 15px; font-style: italic;">
                     Need help? Contact our support team.
                 </p>

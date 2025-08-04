@@ -2,74 +2,36 @@
 # THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
 # ------------------------------------------------------
 
-type AuthorizationResponseDto {
-  """Indique si l'accès est autorisé"""
-  allow: Boolean!
-
-  """Raison de la décision"""
-  reason: String
-
-  """Timestamp de la décision"""
-  timestamp: String
-
-  """Temps d'évaluation en ms"""
-  evaluationTime: Float
-
-  """Résultat mis en cache"""
-  cached: Boolean
-
-  """ID de corrélation"""
-  correlationId: String
+type ApplicationDetails {
+  applicationID: String!
+  name: String
+  description: String
+  plan: String
+  isOfficialApp: Boolean
 }
 
-type AuthorizationLogDto {
-  """Identifiant du log"""
-  id: ID!
-
-  """Identifiant de l'utilisateur"""
-  userId: ID!
-
-  """Identifiant de la ressource"""
-  resourceId: ID!
-
-  """Type de ressource"""
-  resourceType: String!
-
-  """Action demandée"""
-  action: String!
-
-  """Décision d'autorisation"""
-  allow: Boolean!
-
-  """Raison de la décision"""
-  reason: String
-
-  """Contexte de la demande"""
-  context: JSONObject
-
-  """Timestamp de la décision"""
-  timestamp: String!
-
-  """Temps d'évaluation en ms"""
-  evaluationTime: Float
-
-  """ID de corrélation"""
-  correlationId: String
-
-  """ID de session"""
-  sessionId: String
-
-  """Adresse IP"""
-  ip: String
-
-  """User Agent"""
-  userAgent: String
+type AppLoginResponse {
+  accessToken: String
+  refreshToken: String
+  accessValidityDuration: Float
+  refreshValidityDuration: Float
+  application: ApplicationDetails
+  message: String
+  errors: [String!]
 }
 
-"""
-The `JSONObject` scalar type represents JSON objects as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
-"""
-scalar JSONObject
+type ApplicationTokenValidationResult {
+  valid: Boolean!
+  appID: String
+  clientId: String
+  scopes: [String!]
+  expiresAt: String
+}
+
+type ApplicationLogoutResponse {
+  success: Boolean!
+  message: String!
+}
 
 type MFAMethodDto {
   """ID de la méthode"""
@@ -102,6 +64,11 @@ type MFAMethodDto {
   """Métadonnées (masquées)"""
   metadata: JSONObject
 }
+
+"""
+The `JSONObject` scalar type represents JSON objects as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf).
+"""
+scalar JSONObject
 
 type MFASetupResultDto {
   """Succès de la configuration"""
@@ -438,6 +405,36 @@ type MFAAuditLogDto {
   correlationId: String
 }
 
+type PasswordValidationDto {
+  valid: Boolean!
+  score: Float!
+  errors: [String!]!
+  suggestions: [String!]!
+}
+
+type UsernameValidationDto {
+  valid: Boolean!
+  available: Boolean!
+  errors: [String!]!
+  suggestions: [String!]!
+}
+
+type EmailValidationDto {
+  valid: Boolean!
+  available: Boolean!
+  deliverable: Boolean!
+  errors: [String!]!
+}
+
+type PasswordPolicyDto {
+  minLength: Float!
+  requireUppercase: Boolean!
+  requireLowercase: Boolean!
+  requireNumbers: Boolean!
+  requireSpecialChars: Boolean!
+  forbiddenPatterns: [String!]!
+}
+
 type UserRegistrationResponseDto {
   """Succès de l'enregistrement"""
   success: Boolean!
@@ -666,29 +663,6 @@ type EnrichedTokenValidationDto {
   rawKeycloakData: JSONObject
 }
 
-type ConnectionTestDto {
-  """Indique si la connexion est établie"""
-  connected: Boolean!
-
-  """Informations sur la connexion"""
-  info: String
-
-  """Message d'erreur"""
-  error: String
-
-  """Latence en millisecondes"""
-  latency: Float
-
-  """Détails supplémentaires"""
-  details: JSONObject
-
-  """Timestamp"""
-  timestamp: String
-
-  """Version du service"""
-  version: String
-}
-
 type AuthenticationLogDto {
   """ID utilisateur"""
   userId: String!
@@ -721,39 +695,71 @@ type AuthenticationLogDto {
   username: String
 }
 
-type PasswordValidationDto {
-  valid: Boolean!
-  score: Float!
-  errors: [String!]!
-  suggestions: [String!]!
+type AuthorizationResponseDto {
+  """Indique si l'accès est autorisé"""
+  allow: Boolean!
+
+  """Raison de la décision"""
+  reason: String
+
+  """Timestamp de la décision"""
+  timestamp: String
+
+  """Temps d'évaluation en ms"""
+  evaluationTime: Float
+
+  """Résultat mis en cache"""
+  cached: Boolean
+
+  """ID de corrélation"""
+  correlationId: String
 }
 
-type UsernameValidationDto {
-  valid: Boolean!
-  available: Boolean!
-  errors: [String!]!
-  suggestions: [String!]!
-}
+type AuthorizationLogDto {
+  """Identifiant du log"""
+  id: ID!
 
-type EmailValidationDto {
-  valid: Boolean!
-  available: Boolean!
-  deliverable: Boolean!
-  errors: [String!]!
-}
+  """Identifiant de l'utilisateur"""
+  userId: ID!
 
-type PasswordPolicyDto {
-  minLength: Float!
-  requireUppercase: Boolean!
-  requireLowercase: Boolean!
-  requireNumbers: Boolean!
-  requireSpecialChars: Boolean!
-  forbiddenPatterns: [String!]!
+  """Identifiant de la ressource"""
+  resourceId: ID!
+
+  """Type de ressource"""
+  resourceType: String!
+
+  """Action demandée"""
+  action: String!
+
+  """Décision d'autorisation"""
+  allow: Boolean!
+
+  """Raison de la décision"""
+  reason: String
+
+  """Contexte de la demande"""
+  context: JSONObject
+
+  """Timestamp de la décision"""
+  timestamp: String!
+
+  """Temps d'évaluation en ms"""
+  evaluationTime: Float
+
+  """ID de corrélation"""
+  correlationId: String
+
+  """ID de session"""
+  sessionId: String
+
+  """Adresse IP"""
+  ip: String
+
+  """User Agent"""
+  userAgent: String
 }
 
 type Query {
-  checkAccess(input: AuthorizationRequestInput!): AuthorizationResponseDto!
-  getAuthorizationHistory(userId: String, resourceId: String, limit: Float = 100, offset: Float = 0): [AuthorizationLogDto!]!
   validateToken(token: String!): TokenValidationDto!
   validateTokenEnriched(token: String!): EnrichedTokenValidationDto!
   getUserInfo(userId: String!): UserInfoDto
@@ -764,17 +770,20 @@ type Query {
   generateUsernameSuggestions(email: String!, firstName: String, lastName: String): [String!]!
   getPasswordPolicy: PasswordPolicyDto!
   isRegistrationEnabled: Boolean!
-  testRedisConnection: ConnectionTestDto!
-  testKeycloakConnection: ConnectionTestDto!
-  testOPAConnection: ConnectionTestDto!
   getAuthenticationHistory(userId: String, limit: Float = 100, offset: Float = 0): [AuthenticationLogDto!]!
   isUserOnline(userId: String!): Boolean!
-  getAuthenticationStats: ConnectionTestDto!
   checkPermission(token: String!, resourceId: String!, resourceType: String!, action: String!, context: JSONObject): Boolean!
   getUserMFAMethods(userId: String!): [MFAMethodDto!]!
   getRecoveryOptions(userId: String!): RecoveryOptionsDto!
   getTrustedDevices(userId: String!): [TrustedDeviceDto!]!
   isDeviceTrusted(userId: String!, deviceFingerprint: String!): Boolean!
+  validateApplicationToken(input: ValidateApplicationTokenInput!): ApplicationTokenValidationResult!
+  checkAccess(input: AuthorizationRequestInput!): AuthorizationResponseDto!
+  getAuthorizationHistory(userId: String, resourceId: String, limit: Float = 100, offset: Float = 0): [AuthorizationLogDto!]!
+}
+
+input ValidateApplicationTokenInput {
+  accessToken: String!
 }
 
 input AuthorizationRequestInput {
@@ -890,8 +899,7 @@ type Mutation {
   refreshToken(input: RefreshTokenInputDto!): LoginResponseDto!
   getClientCredentialsToken: LoginResponseDto!
   logout(token: String!): Boolean!
-  invalidateUserCache(userId: String!): Boolean!
-  registerUser(input: UserRegistrationInputDto!): UserRegistrationResponseDto!
+  registerUser(input: UserRegistrationInputDto!): Boolean!
   verifyEmail(input: VerifyEmailInputDto!): EmailVerificationResponseDto!
   resendVerificationEmail(input: ResendVerificationInputDto!): EmailVerificationResponseDto!
   requestPasswordReset(input: ResetPasswordInputDto!): PasswordResetResponseDto!
@@ -907,7 +915,12 @@ type Mutation {
   generateMagicLink(input: MagicLinkRequestDto!): MagicLinkResultDto!
   verifyMagicLink(token: String!): MagicLinkVerificationResultDto!
   initiatePasswordlessAuth(input: PasswordlessAuthInputDto!): PasswordlessAuthResultDto!
+  revokeMagicLink(linkId: String!): Boolean!
+  cleanupExpiredMagicLinks: Float!
   loginWithOptions(input: LoginWithOptionsInputDto!): LoginWithMFAResultDto!
+  authenticateApp(input: AppLoginInput!): AppLoginResponse!
+  refreshApplicationAccessToken(input: RefreshApplicationTokenInput!): AppLoginResponse!
+  logoutApp(input: LogoutApplicationInput!): ApplicationLogoutResponse!
 }
 
 input LoginInputDto {
@@ -1122,4 +1135,19 @@ input LoginWithOptionsInputDto {
 
   """Se souvenir de l'appareil"""
   rememberDevice: Boolean = false
+}
+
+input AppLoginInput {
+  appID: String!
+  appKey: String!
+}
+
+input RefreshApplicationTokenInput {
+  appID: String!
+  refreshToken: String!
+}
+
+input LogoutApplicationInput {
+  appID: String!
+  accessToken: String!
 }

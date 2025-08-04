@@ -14,7 +14,11 @@ import { join } from 'path';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath: `.env.${process.env.NODE_ENV || 'local'}`,
+      envFilePath: [
+        `.env.${process.env.NODE_ENV || 'local'}`,
+        '.env.local',  
+        '.env'         
+      ],
     }),
     
     CacheModule.registerAsync({
@@ -58,6 +62,12 @@ export class AppModule {
   }
   
   constructor() {
+    console.log('🔍 NODE_ENV:', process.env.NODE_ENV);
+    console.log('🔍 Fichiers .env chargés depuis:', [
+      `.env.${process.env.NODE_ENV || 'local'}`,
+      '.env.local',
+      '.env'
+    ]);
     console.log('🚀 mu-auth service initialized with session management');
   }
 }

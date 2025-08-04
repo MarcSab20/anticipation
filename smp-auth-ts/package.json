@@ -20,6 +20,8 @@
     "@sendgrid/mail": "^8.1.5",
     "@types/twilio": "^3.19.2",
     "axios": "^1.6.2",
+    "buffer": "^6.0.3",
+    "https": "^1.0.0",
     "jsonwebtoken": "^9.0.2",
     "otplib": "^12.0.1",
     "qrcode": "^1.5.3",

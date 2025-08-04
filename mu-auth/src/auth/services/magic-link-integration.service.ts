@@ -84,7 +84,7 @@ export interface MagicLinkSessionRequest {
         // Configurer les événements
         this.setupEventHandlers();
         
-        this.logger.log(`✅ Magic Link service initialized successfully with Twilio`);
+        this.logger.log(`✅ Magic Link service initialized successfully with MailJet`);
         
       } catch (error) {
         this.logger.error('❌ Failed to initialize Magic Link service:', error);
@@ -93,90 +93,115 @@ export interface MagicLinkSessionRequest {
     }
 
     private validateConfiguration(config: any): void {
-    const errors: string[] = [];
-    
-    if (!config.enabled) {
-      this.logger.warn('🔗 Magic Link is disabled');
-      return;
-    }
-    
-    // ✅ Validation pour Mailjet
-    if (!config.mailjet.apiKey) {
-      errors.push('MAILJET_API_KEY is required');
-    }
-    
-    if (!config.mailjet.apiSecret) {
-      errors.push('MAILJET_API_SECRET is required');
-    }
-    
-    if (!config.mailjet.fromEmail) {
-      errors.push('MAILJET_FROM_EMAIL is required');
-    }
-    
-    if (!config.frontend.baseUrl) {
-      errors.push('FRONTEND_URL is required');
-    }
-    
-    // Validation format email
-    if (config.mailjet.fromEmail) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(config.mailjet.fromEmail)) {
-        errors.push('MAILJET_FROM_EMAIL format is invalid');
-      }
-    }
-    
-    // Validation URL frontend
-    try {
-      new URL(config.frontend.baseUrl);
-    } catch {
-      errors.push('FRONTEND_URL format is invalid');
-    }
-    
-    if (errors.length > 0) {
-      throw new Error(`Magic Link configuration errors: ${errors.join(', ')}`);
+  const errors: string[] = [];
+  
+  if (!config.enabled) {
+    this.logger.warn('🔗 Magic Link is disabled');
+    return;
+  }
+  
+  // 🔥 AJOUTEZ CES LOGS DE DEBUG
+  console.log('🔍 Configuration reçue:');
+  console.log('Config mailjet:', JSON.stringify(config.mailjet, null, 2));
+  
+  // ✅ Validation pour Mailjet
+  if (!config.mailjet.apiKey) {
+    errors.push('MAILJET_API_KEY is required');
+    console.log('❌ MAILJET_API_KEY manquant. Valeur actuelle:', config.mailjet.apiKey);
+  }
+  
+  if (!config.mailjet.apiSecret) {
+    errors.push('MAILJET_API_SECRET is required');
+    console.log('❌ MAILJET_API_SECRET manquant. Valeur actuelle:', config.mailjet.apiSecret);
+  }
+  
+  if (!config.mailjet.fromEmail) {
+    errors.push('MAILJET_FROM_EMAIL is required');
+    console.log('❌ MAILJET_FROM_EMAIL manquant. Valeur actuelle:', config.mailjet.fromEmail);
+  }
+  
+  if (!config.frontend.baseUrl) {
+    errors.push('FRONTEND_URL is required');
+  }
+  
+  // Validation format email
+  if (config.mailjet.fromEmail) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(config.mailjet.fromEmail)) {
+      errors.push('MAILJET_FROM_EMAIL format is invalid');
     }
   }
+  
+  // Validation URL frontend
+  try {
+    new URL(config.frontend.baseUrl);
+  } catch {
+    errors.push('FRONTEND_URL format is invalid');
+  }
+  
+  if (errors.length > 0) {
+    console.log('❌ Erreurs de configuration:', errors);
+    throw new Error(`Magic Link configuration errors: ${errors.join(', ')}`);
+  }
+  
+    console.log('✅ Configuration Mailjet validée avec succès');
+}
 
 
-    private loadMagicLinkConfig(): any {
-    return {
-      enabled: this.configService.get('MAGIC_LINK_ENABLED', 'true') !== 'false',
-      tokenLength: parseInt(this.configService.get('MAGIC_LINK_TOKEN_LENGTH', '32')),
-      expiryMinutes: parseInt(this.configService.get('MAGIC_LINK_EXPIRY_MINUTES', '30')),
-      maxUsesPerDay: parseInt(this.configService.get('MAGIC_LINK_MAX_USES_PER_DAY', '10')),
-      requireExistingUser: this.configService.get('MAGIC_LINK_REQUIRE_EXISTING_USER', 'false') === 'true',
-      autoCreateUser: this.configService.get('MAGIC_LINK_AUTO_CREATE_USER', 'true') !== 'false',
-      
-      mailjet: {
-        apiKey: this.configService.get('MAILJET_API_KEY', ''),
-        apiSecret: this.configService.get('MAILJET_API_SECRET', ''),
-        fromEmail: this.configService.get('MAILJET_FROM_EMAIL', ''),
-        fromName: this.configService.get('FROM_NAME', 'SMP Platform'),
-        templates: {
-          magicLink: this.configService.get('MAILJET_TEMPLATE_MAGIC_LINK', ''),
-          welcome: this.configService.get('MAILJET_TEMPLATE_WELCOME', ''),
-          passwordReset: this.configService.get('MAILJET_TEMPLATE_PASSWORD_RESET', ''),
-          mfaCode: this.configService.get('MAILJET_TEMPLATE_MFA_CODE', '')
-        },
-        sandbox: this.configService.get('NODE_ENV') !== 'production'
+   private loadMagicLinkConfig(): any {
+  // 🔥 AJOUTEZ CES LOGS DE DEBUG
+  console.log('🔍 DEBUG - Variables d\'environnement Mailjet:');
+  console.log('NODE_ENV:', process.env.NODE_ENV);
+  console.log('MAILJET_API_KEY exists:', !!process.env.MAILJET_API_KEY);
+  console.log('MAILJET_API_SECRET exists:', !!process.env.MAILJET_API_SECRET);
+  console.log('MAILJET_FROM_EMAIL:', process.env.MAILJET_FROM_EMAIL);
+  console.log('EMAIL_PROVIDER:', process.env.EMAIL_PROVIDER);
+  
+  // 🔥 DEBUG: Afficher toutes les variables qui commencent par MAILJET
+  Object.keys(process.env)
+    .filter(key => key.startsWith('MAILJET'))
+    .forEach(key => {
+      console.log(`${key}:`, process.env[key] ? '✅ Set' : '❌ Missing');
+    });
+
+  return {
+    enabled: this.configService.get('MAGIC_LINK_ENABLED', 'true') !== 'false',
+    tokenLength: parseInt(this.configService.get('MAGIC_LINK_TOKEN_LENGTH', '32')),
+    expiryMinutes: parseInt(this.configService.get('MAGIC_LINK_EXPIRY_MINUTES', '30')),
+    maxUsesPerDay: parseInt(this.configService.get('MAGIC_LINK_MAX_USES_PER_DAY', '10')),
+    requireExistingUser: this.configService.get('MAGIC_LINK_REQUIRE_EXISTING_USER', 'false') === 'true',
+    autoCreateUser: this.configService.get('MAGIC_LINK_AUTO_CREATE_USER', 'true') !== 'false',
+    
+    mailjet: {
+      apiKey: this.configService.get('MAILJET_API_KEY', ''),
+      apiSecret: this.configService.get('MAILJET_API_SECRET', ''),
+      fromEmail: this.configService.get('MAILJET_FROM_EMAIL', ''),
+      fromName: this.configService.get('FROM_NAME', 'SMP Platform'),
+      templates: {
+        magicLink: this.configService.get('MAILJET_TEMPLATE_MAGIC_LINK', ''),
+        welcome: this.configService.get('MAILJET_TEMPLATE_WELCOME', ''),
+        passwordReset: this.configService.get('MAILJET_TEMPLATE_PASSWORD_RESET', ''),
+        mfaCode: this.configService.get('MAILJET_TEMPLATE_MFA_CODE', '')
       },
-      
-      frontend: {
-        baseUrl: this.configService.get('FRONTEND_URL', 'http://localhost:3001'),
-        magicLinkPath: this.configService.get('MAGIC_LINK_PATH', '/auth/magic-link'),
-        redirectPaths: {
-          login: this.configService.get('REDIRECT_LOGIN', '/dashboard'),
-          register: this.configService.get('REDIRECT_REGISTER', '/welcome'),
-          resetPassword: this.configService.get('REDIRECT_RESET_PASSWORD', '/auth/password-reset'),
-          verifyEmail: this.configService.get('REDIRECT_VERIFY_EMAIL', '/auth/email-verified')
-        }
-      },
-      backend: {
+      sandbox: this.configService.get('NODE_ENV') !== 'production'
+    },
+    
+    frontend: {
+      baseUrl: this.configService.get('FRONTEND_URL', 'http://localhost:3001'),
+      magicLinkPath: this.configService.get('MAGIC_LINK_PATH', '/auth/magic-link'),
+      redirectPaths: {
+        login: this.configService.get('REDIRECT_LOGIN', '/dashboard'),
+        register: this.configService.get('REDIRECT_REGISTER', '/welcome'),
+        resetPassword: this.configService.get('REDIRECT_RESET_PASSWORD', '/auth/password-reset'),
+        verifyEmail: this.configService.get('REDIRECT_VERIFY_EMAIL', '/auth/email-verified')
+      }
+    },
+    backend: {
       baseUrl: this.configService.get('BACKEND_URL', 'http://localhost:3001'),
       magicLinkVerifyPath: '/auth/magic-link/verify'
     }
-    };
-  }
+  };
+}
 
     private async initializeClients(): Promise<void> {
       try {
