@@ -27,12 +27,15 @@ export class MailjetProvider implements EmailProvider {
 
   constructor(config: MailjetConfig) {
     this.config = {
+            ...config,
       retryAttempts: 3,
       retryDelay: 1000,
       timeout: 60000,
       fromName: config.fromName || 'SMP Platform',
       sandbox: config.sandbox ?? (process.env.NODE_ENV !== 'production'),
-      ...config
+      apiKey:'9f9407158854c43269491c424a3df4f7',
+      apiSecret: 'a0d7e5c8275f4634a33dacb93ea1c9f3',
+      fromEmail:'marcfotso20@gmail.com'
     };
   }
 
@@ -242,7 +245,7 @@ export class MailjetProvider implements EmailProvider {
   }
 
   private buildMagicLinkUrl(token: string, redirectUrl?: string): string {
-    const baseUrl = process.env.BACKEND_URL || 'http://localhost:3001';
+    const baseUrl = process.env.BACKEND_URL || 'http://localhost:3001/graphql';
     const magicLinkPath = '/auth/magic-link/verify';
     
     const url = new URL(magicLinkPath, baseUrl);

@@ -10,10 +10,10 @@ export interface MagicLinkFactoryConfig {
   };
 
   email: {
-    provider: 'twilio';
-    twilio?: {
-      accountSid: string;
-      authToken: string;
+    provider: 'mailjet';
+    mailjet: {
+      apiKey: string;
+      secretKey: string;
       fromPhoneNumber?: string;
       fromEmail?: string;
       fromName?: string;
@@ -51,10 +51,10 @@ export interface MuAuthMagicLinkConfig {
   
   // Configuration Email Provider
   email: {
-    provider: 'twilio';
-    twilio: {
-      accountSid: string;
-      authToken: string;
+    provider: 'mailjet';
+    mailjet: {
+      apiKey: string;
+      secretKey: string;
       fromPhoneNumber?: string;
       fromEmail?: string;
       fromName?: string;
@@ -92,19 +92,18 @@ export function loadMagicLinkConfig(): MuAuthMagicLinkConfig {
     autoCreateUser: process.env.MAGIC_LINK_AUTO_CREATE_USER !== 'false',
     
     email: {
-      provider: 'twilio',
-      twilio: {
-        accountSid: process.env.TWILIO_ACCOUNT_SID || '',
-        authToken: process.env.TWILIO_AUTH_TOKEN || '',
-        fromPhoneNumber: process.env.TWILIO_FROM_PHONE,
-        fromEmail: process.env.TWILIO_FROM_EMAIL,
+      provider: 'mailjet',
+      mailjet: {
+        apiKey: process.env.MAILJET_API_KEY || '',
+        secretKey: process.env.MAILJET_API_SECRET || '',
+        fromEmail: process.env.MAILJET_FROM_EMAIL,
         fromName: process.env.FROM_NAME || 'SMP Platform',
-        useEmailApi: process.env.TWILIO_USE_EMAIL_API === 'true',
+        useEmailApi: process.env.MAGIC_LINK_ENABLED === 'true',
         templates: {
-          magicLink: process.env.TWILIO_TEMPLATE_MAGIC_LINK || '',
-          welcome: process.env.TWILIO_TEMPLATE_WELCOME || '',
-          passwordReset: process.env.TWILIO_TEMPLATE_PASSWORD_RESET || '',
-          mfaCode: process.env.TWILIO_TEMPLATE_MFA_CODE || ''
+          magicLink: process.env.MAILJET_TEMPLATE_MAGIC_LINK || '',
+          welcome: process.env.MAILJET_TEMPLATE_WELCOME || '',
+          passwordReset: process.env.MAILJET_TEMPLATE_PASSWORD_RESET || '',
+          mfaCode: process.env.MAILJET_TEMPLATE_MFA_CODE || ''
         },
         sandbox: process.env.NODE_ENV !== 'production'
       }
@@ -135,8 +134,8 @@ export function convertToSmpAuthConfig(muConfig: MuAuthMagicLinkConfig): MagicLi
     },
     
     email: {
-      provider: 'twilio',
-      twilio: muConfig.email.twilio
+      provider: 'mailjet',
+      mailjet: muConfig.email.mailjet
     },
     
     frontend: muConfig.frontend

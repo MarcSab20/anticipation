@@ -4,4 +4,3 @@ dist/
 *.log  
 
 package-lock.json
-smp-auth-ts-1.0.0.tgz
