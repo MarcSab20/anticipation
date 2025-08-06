@@ -10,6 +10,8 @@ import { EventLoggerService } from './services/event-logger.service';
 import { UserRegistrationValidationService } from './services/user-registration-validation.service';
 import { MagicLinkIntegrationService } from './services/magic-link-integration.service';
 import { PrismaModule } from '../common/prisma/prisma.module';
+import { OAuthResolver } from './resolvers/oauth.resolver';
+import { OAuthService } from './services/oauth.service';
 
 @Module({
   imports: [
@@ -21,6 +23,8 @@ import { PrismaModule } from '../common/prisma/prisma.module';
   providers: [
     AuthService,
     AuthResolver,
+    OAuthResolver,
+    OAuthService,
     PostgresUserService,
     UserRegistrationValidationService,
     KeycloakPostgresSyncService,
@@ -33,12 +37,18 @@ import { PrismaModule } from '../common/prisma/prisma.module';
     EventLoggerService,
     UserRegistrationValidationService,
     KeycloakPostgresSyncService,
-    MagicLinkIntegrationService 
+    MagicLinkIntegrationService,
+    OAuthService 
   ],
 })
 export class AuthModule {
   constructor() {
     console.log('🔐 AuthModule initialized with comprehensive authentication system:');
-    console.log('Ready for production use with Magic Link! 🚀🔗');
+    console.log('✅ Standard authentication (username/password)');
+    console.log('✅ Magic Link authentication');
+    console.log('✅ OAuth2 authentication (Google & GitHub)');
+    console.log('✅ MFA support');
+    console.log('✅ GraphQL & REST APIs');
+    console.log('Ready for production use! 🚀');
   }
 }

@@ -1,10 +1,11 @@
-// mu-auth/src/app.module.ts
+// mu-auth/src/app.module.ts - Version complète avec OAuth
 import { Module, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { AuthorizationModule } from './authorization/authorization.module';
 import { SessionModule } from './session/session.module'; 
 import { SessionMiddleware } from './session/session.middleware'; 
+import { OAuthStartupCheckService } from './common/startup/oauth-check-service'; // ✅ OAuth startup check
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloFederationDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { CacheModule } from '@nestjs/cache-manager';
@@ -14,7 +15,7 @@ import { existsSync } from 'fs';
 
 @Module({
   imports: [
-    // ✅ CORRECTION PRINCIPALE: Configuration améliorée des fichiers .env
+    // ✅ CORRECTION PRINCIPALE: Configuration améliorée des fichiers .env avec validation OAuth
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: (() => {
@@ -70,21 +71,33 @@ import { existsSync } from 'fs';
       introspection: true,
     }),
     
-    AuthModule,
+    AuthModule,      // ✅ AuthModule contient maintenant OAuth
     AuthorizationModule,
     SessionModule, 
   ],
-  providers: [ConfigService],
+  providers: [
+    ConfigService,
+    OAuthStartupCheckService, // ✅ Service de vérification OAuth au démarrage
+  ],
 })
 export class AppModule {
-  constructor(private readonly configService: ConfigService) {
-    // ✅ DEBUG: Afficher les variables critiques au démarrage
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly oauthCheck: OAuthStartupCheckService // ✅ Injection OAuth check
+  ) {
+    // ✅ DEBUG: Afficher les variables critiques au démarrage (incluant OAuth)
     this.debugCriticalVariables();
     
-    console.log('🚀 mu-auth service initialized with session management');
+    console.log('🚀 mu-auth service initialized with comprehensive authentication:');
+    console.log('  ✅ Standard authentication (username/password)');
+    console.log('  ✅ Magic Link authentication');
+    console.log('  ✅ OAuth2 authentication (Google & GitHub)');
+    console.log('  ✅ MFA support');
+    console.log('  ✅ Session management');
+    console.log('  ✅ GraphQL & REST APIs');
   }
 
-  // ✅ NOUVELLE MÉTHODE: Debug des variables critiques
+  // ✅ NOUVELLE MÉTHODE: Debug des variables critiques avec OAuth
   private debugCriticalVariables(): void {
     console.log('🔍 =================================');
     console.log('🔍 VARIABLES D\'ENVIRONNEMENT CRITIQUES');
@@ -92,26 +105,76 @@ export class AppModule {
     
     const criticalVars = [
       'NODE_ENV',
+      
+      // Keycloak
+      'KEYCLOAK_URL',
+      'KEYCLOAK_REALM',
+      'KEYCLOAK_CLIENT_ID',
+      'KEYCLOAK_CLIENT_SECRET',
+      
+      // Redis
+      'REDIS_HOST',
+      'REDIS_PORT',
+      
+      // Email (Mailjet)
+      'EMAIL_PROVIDER',
       'MAILJET_API_KEY',
       'MAILJET_API_SECRET', 
       'MAILJET_FROM_EMAIL',
-      'EMAIL_PROVIDER',
+      
+      // Magic Link
       'MAGIC_LINK_ENABLED',
+      
+      // OAuth Google
+      'GOOGLE_OAUTH_ENABLED',
+      'GOOGLE_CLIENT_ID',
+      'GOOGLE_CLIENT_SECRET',
+      'GOOGLE_REDIRECT_URI',
+      
+      // OAuth GitHub
+      'GITHUB_OAUTH_ENABLED',
+      'GITHUB_CLIENT_ID',
+      'GITHUB_CLIENT_SECRET',
+      'GITHUB_REDIRECT_URI',
+      
+      // URLs
       'FRONTEND_URL',
-      'KEYCLOAK_URL',
-      'REDIS_HOST'
+      'API_URL'
     ];
 
     criticalVars.forEach(varName => {
       const value = this.configService.get(varName);
       const status = value ? '✅' : '❌';
-      const displayValue = value ? 
-        (varName.includes('SECRET') || varName.includes('KEY') ? 
-          `${value.toString().substring(0, 8)}...` : value) : 
-        'NON DÉFINIE';
+      
+      let displayValue: string;
+      if (!value) {
+        displayValue = 'NON DÉFINIE';
+      } else if (varName.includes('SECRET') || varName.includes('KEY') || varName.includes('PASSWORD')) {
+        displayValue = `${value.toString().substring(0, 8)}...`;
+      } else if (varName.includes('CLIENT_ID') && value.toString().length > 20) {
+        displayValue = `${value.toString().substring(0, 15)}...`;
+      } else {
+        displayValue = value.toString();
+      }
       
       console.log(`🔍 ${varName}: ${status} ${displayValue}`);
     });
+    
+    // ✅ Section spéciale OAuth
+    console.log('🔍 ---------------------------------');
+    console.log('🔍 OAUTH STATUS:');
+    
+    const googleEnabled = this.configService.get<boolean>('GOOGLE_OAUTH_ENABLED', false);
+    const githubEnabled = this.configService.get<boolean>('GITHUB_OAUTH_ENABLED', false);
+    const googleConfigured = !!(this.configService.get('GOOGLE_CLIENT_ID') && this.configService.get('GOOGLE_CLIENT_SECRET'));
+    const githubConfigured = !!(this.configService.get('GITHUB_CLIENT_ID') && this.configService.get('GITHUB_CLIENT_SECRET'));
+    
+    console.log(`🔍 Google OAuth: ${googleEnabled ? '✅ ENABLED' : '❌ DISABLED'} ${googleConfigured ? '(CONFIGURED)' : '(NOT CONFIGURED)'}`);
+    console.log(`🔍 GitHub OAuth: ${githubEnabled ? '✅ ENABLED' : '❌ DISABLED'} ${githubConfigured ? '(CONFIGURED)' : '(NOT CONFIGURED)'}`);
+    
+    if ((googleEnabled && !googleConfigured) || (githubEnabled && !githubConfigured)) {
+      console.log('🔍 ⚠️ Some OAuth providers are enabled but not configured!');
+    }
     
     console.log('🔍 =================================');
   }

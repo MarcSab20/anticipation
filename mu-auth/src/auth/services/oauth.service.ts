@@ -3,15 +3,19 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth.service';
 import { 
+  createOAuthServiceFromEnv,
   OAuthServiceImpl,
+  createRedisClient,
+  createKeycloakClient,
   OAuthAuthorizationRequest,
   OAuthAuthorizationResponse,
   OAuthCallbackRequest,
   OAuthCallbackResponse,
   LinkedAccount,
   OAuthTokenResponse,
-  loadOAuthConfig,
-  OAuthConfig
+  validateOAuthConfig,
+  OAuthConfig,
+  loadOAuthConfig
 } from 'smp-auth-ts';
 
 @Injectable()
@@ -29,8 +33,8 @@ export class OAuthService implements OnModuleInit {
     try {
       this.logger.log('🔄 Initializing OAuth service...');
       
-      // Charger la configuration OAuth
-      this.config = this.loadOAuthConfiguration();
+      // Charger et valider la configuration OAuth
+      await this.loadAndValidateConfig();
       
       // Vérifier si au moins un provider est configuré
       const hasEnabledProvider = 
@@ -38,35 +42,38 @@ export class OAuthService implements OnModuleInit {
         (this.config.github?.enabled && this.config.github.clientId);
 
       if (!hasEnabledProvider) {
-        this.logger.warn('⚠️ No OAuth providers are enabled or configured');
+        this.logger.warn('⚠️ No OAuth providers are enabled or properly configured');
+        this.logger.warn('🔧 Please configure GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET or GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET');
         return;
       }
 
-      // Initialiser le service OAuth avec les clients de AuthService
-      this.oauthServiceImpl = new OAuthServiceImpl(
-        this.authService['redisClient'], // Accès au RedisClient depuis AuthService
-        this.authService['keycloakClient'], // Accès au KeycloakClient depuis AuthService
-        this.config
-      );
-
-      this.setupEventHandlers();
+      // Initialiser le service OAuth depuis smp-auth-ts
+      await this.initializeSmpAuthOAuth();
 
       const enabledProviders = this.getEnabledProviders();
       this.logger.log(`✅ OAuth service initialized with providers: ${enabledProviders.join(', ')}`);
       
+      // Logger la configuration pour le debugging
+      this.logConfigurationStatus();
+      
     } catch (error) {
       this.logger.error('❌ Failed to initialize OAuth service:', error);
-      throw error;
+      
+      // En cas d'erreur, on continue sans OAuth mais on log l'erreur
+      this.logger.warn('⚠️ OAuth service will be disabled due to initialization error');
     }
   }
 
-  private loadOAuthConfiguration(): OAuthConfig {
-    return loadOAuthConfig({
+  /**
+   * Charger et valider la configuration OAuth
+   */
+  private async loadAndValidateConfig(): Promise<void> {
+    this.config = loadOAuthConfig({
       google: {
         clientId: this.configService.get<string>('GOOGLE_CLIENT_ID', ''),
         clientSecret: this.configService.get<string>('GOOGLE_CLIENT_SECRET', ''),
         redirectUri: this.configService.get<string>('GOOGLE_REDIRECT_URI') || 
-          `${this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000')}/auth/callback/google`,
+          `${this.configService.get<string>('API_URL', 'http://localhost:3001')}/auth/oauth/callback/google`,
         scopes: this.configService.get<string>('GOOGLE_SCOPES', 'openid,email,profile').split(','),
         authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
         tokenUrl: 'https://oauth2.googleapis.com/token',
@@ -80,7 +87,7 @@ export class OAuthService implements OnModuleInit {
         clientId: this.configService.get<string>('GITHUB_CLIENT_ID', ''),
         clientSecret: this.configService.get<string>('GITHUB_CLIENT_SECRET', ''),
         redirectUri: this.configService.get<string>('GITHUB_REDIRECT_URI') || 
-          `${this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000')}/auth/callback/github`,
+          `${this.configService.get<string>('API_URL', 'http://localhost:3001')}/auth/oauth/callback/github`,
         scopes: this.configService.get<string>('GITHUB_SCOPES', 'user:email,read:user').split(','),
         authUrl: 'https://github.com/login/oauth/authorize',
         tokenUrl: 'https://github.com/login/oauth/access_token',
@@ -96,16 +103,68 @@ export class OAuthService implements OnModuleInit {
         syncMode: 'import'
       }
     });
+
+    // Valider la configuration
+    const validation = await validateOAuthConfig(this.config);
+    
+    if (!validation.valid) {
+      this.logger.error('❌ OAuth configuration validation failed:', validation.errors);
+      throw new Error(`OAuth configuration invalid: ${validation.errors.join(', ')}`);
+    }
+
+    if (validation.warnings.length > 0) {
+      this.logger.warn('⚠️ OAuth configuration warnings:', validation.warnings);
+    }
   }
 
+  /**
+   * Initialiser le service OAuth de smp-auth-ts
+   */
+  private async initializeSmpAuthOAuth(): Promise<void> {
+    try {
+      // Créer les clients Redis et Keycloak à partir de la configuration existante
+      const redisConfig = {
+        host: this.configService.get<string>('REDIS_HOST', 'localhost'),
+        port: this.configService.get<number>('REDIS_PORT', 6379),
+        password: this.configService.get<string>('REDIS_PASSWORD'),
+        db: this.configService.get<number>('REDIS_DB', 0),
+        prefix: this.configService.get<string>('OAUTH_REDIS_PREFIX', 'oauth:')
+      };
+
+      const keycloakConfig = {
+        url: this.configService.get<string>('KEYCLOAK_URL', 'http://localhost:8080'),
+        realm: this.configService.get<string>('KEYCLOAK_REALM', 'mu-realm'),
+        clientId: this.configService.get<string>('KEYCLOAK_CLIENT_ID', 'mu-client'),
+        clientSecret: this.configService.get<string>('KEYCLOAK_CLIENT_SECRET', ''),
+        adminClientId: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_ID'),
+        adminClientSecret: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_SECRET')
+      };
+
+      const redisClient = createRedisClient(redisConfig);
+      const keycloakClient = createKeycloakClient(keycloakConfig);
+
+      // Créer le service OAuth
+      this.oauthServiceImpl = createOAuthServiceFromEnv(redisClient, keycloakClient);
+
+      this.setupEventHandlers();
+
+    } catch (error) {
+      this.logger.error('❌ Failed to create OAuth service from smp-auth-ts:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Configurer les gestionnaires d'événements
+   */
   private setupEventHandlers(): void {
     if (!this.oauthServiceImpl) return;
 
     this.oauthServiceImpl.addEventListener('oauth_authorization_completed', async (event) => {
       this.logger.log(`🎉 OAuth authorization completed: ${event.provider} - ${event.email}`);
       
-      // Ici vous pouvez ajouter une logique supplémentaire
-      // comme synchroniser avec votre base de données PostgreSQL
+      // Synchroniser avec la base de données locale si nécessaire
+      // await this.syncOAuthUser(event);
     });
 
     this.oauthServiceImpl.addEventListener('oauth_authorization_failed', async (event) => {
@@ -121,7 +180,35 @@ export class OAuthService implements OnModuleInit {
     });
   }
 
-  // Méthodes publiques déléguées
+  /**
+   * Logger le statut de la configuration
+   */
+  private logConfigurationStatus(): void {
+    this.logger.log('🔍 =================================');
+    this.logger.log('🔍 OAUTH CONFIGURATION STATUS');
+    this.logger.log('🔍 =================================');
+    
+    const providers = ['google', 'github'];
+    
+    for (const provider of providers) {
+      const config = this.config[provider as keyof OAuthConfig] as any;
+      const enabled = config?.enabled || false;
+      const configured = !!(config?.clientId && config?.clientSecret);
+      const status = enabled && configured ? '✅' : enabled ? '🔶' : '❌';
+      
+      this.logger.log(`🔍 ${provider.toUpperCase()}: ${status} ${enabled ? 'ENABLED' : 'DISABLED'} ${configured ? 'CONFIGURED' : 'NOT CONFIGURED'}`);
+      
+      if (enabled && !configured) {
+        this.logger.warn(`⚠️ ${provider.toUpperCase()}: Enabled but missing credentials`);
+      }
+    }
+    
+    this.logger.log('🔍 =================================');
+  }
+
+  // ============================================================================
+  // MÉTHODES PUBLIQUES - Interface avec smp-auth-ts
+  // ============================================================================
 
   async getAuthorizationUrl(request: OAuthAuthorizationRequest): Promise<OAuthAuthorizationResponse> {
     if (!this.oauthServiceImpl) {
@@ -165,7 +252,9 @@ export class OAuthService implements OnModuleInit {
     return this.oauthServiceImpl.refreshProviderToken(userId, provider);
   }
 
-  // Méthodes utilitaires
+  // ============================================================================
+  // MÉTHODES UTILITAIRES
+  // ============================================================================
 
   getEnabledProviders(): string[] {
     if (!this.oauthServiceImpl) {
@@ -189,7 +278,45 @@ export class OAuthService implements OnModuleInit {
   }
 
   /**
-   * Méthode utilitaire pour générer les URLs d'authentification
+   * Vérifier la santé du service OAuth
+   */
+  async checkHealth(): Promise<{
+    healthy: boolean;
+    activeProviders: number;
+    availableProviders: string[];
+    issues: string[];
+    lastChecked: string;
+  }> {
+    const issues: string[] = [];
+    const availableProviders = this.getEnabledProviders();
+    
+    if (!this.oauthServiceImpl) {
+      issues.push('OAuth service not initialized');
+    }
+    
+    if (availableProviders.length === 0) {
+      issues.push('No OAuth providers are enabled');
+    }
+
+    // Tester la connectivité Redis (si accessible)
+    try {
+      // Test simple de connectivité
+      // await this.oauthServiceImpl?.testConnection?.();
+    } catch (error) {
+      issues.push(`Redis connectivity issue: ${error}`);
+    }
+
+    return {
+      healthy: issues.length === 0,
+      activeProviders: availableProviders.length,
+      availableProviders,
+      issues,
+      lastChecked: new Date().toISOString()
+    };
+  }
+
+  /**
+   * Générer les URLs d'authentification pour tous les providers
    */
   getAuthenticationUrls(): Record<string, string> {
     const baseUrl = this.configService.get<string>('API_URL', 'http://localhost:3001');
@@ -214,7 +341,9 @@ export class OAuthService implements OnModuleInit {
       publicConfig.google = {
         enabled: true,
         scopes: this.config.google.scopes,
-        hostedDomain: this.config.google.hostedDomain
+        hostedDomain: this.config.google.hostedDomain,
+        displayName: 'Google',
+        iconUrl: 'https://developers.google.com/identity/images/g-logo.png'
       };
     }
     
@@ -222,7 +351,9 @@ export class OAuthService implements OnModuleInit {
       publicConfig.github = {
         enabled: true,
         scopes: this.config.github.scopes,
-        allowSignup: this.config.github.allowSignup
+        allowSignup: this.config.github.allowSignup,
+        displayName: 'GitHub',
+        iconUrl: 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png'
       };
     }
     
@@ -230,9 +361,9 @@ export class OAuthService implements OnModuleInit {
   }
 
   /**
-   * Méthode pour tester une authentification OAuth (development)
+   * Tester un provider OAuth (pour debugging)
    */
-  async testOAuthFlow(provider: string): Promise<{
+  async testProvider(provider: string): Promise<{
     success: boolean;
     authUrl?: string;
     error?: string;
@@ -244,12 +375,12 @@ export class OAuthService implements OnModuleInit {
       steps.push(`Checking if provider ${provider} is enabled`);
       
       if (!this.isProviderEnabled(provider)) {
-        throw new Error(`Provider ${provider} is not enabled`);
+        throw new Error(`Provider ${provider} is not enabled or configured`);
       }
       
       steps.push(`Provider ${provider} is enabled`);
       
-      steps.push('Generating authorization URL');
+      steps.push('Generating test authorization URL');
       const result = await this.getAuthorizationUrl({
         provider: provider as 'google' | 'github',
         redirectUri: `${this.configService.get<string>('API_URL')}/auth/oauth/callback/${provider}`,
@@ -265,13 +396,27 @@ export class OAuthService implements OnModuleInit {
       };
       
     } catch (error) {
-      steps.push(`Error: ${error.message}`);
+      steps.push(`Error: ${error instanceof Error ? error.message : String(error)}`);
       
       return {
         success: false,
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
         steps
       };
+    }
+  }
+
+  /**
+   * Nettoyer les ressources
+   */
+  async onModuleDestroy(): Promise<void> {
+    if (this.oauthServiceImpl) {
+      try {
+        await this.oauthServiceImpl.close();
+        this.logger.log('✅ OAuth service closed successfully');
+      } catch (error) {
+        this.logger.error('❌ Error closing OAuth service:', error);
+      }
     }
   }
 }
