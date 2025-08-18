@@ -853,6 +853,7 @@ type Query {
   getAvailableOAuthProviders: [OAuthProviderInfo!]!
   getOAuthProviderStatus(provider: String!): OAuthProviderInfo
   testOAuthProvider(provider: String!): Boolean!
+  isOAuthServiceHealthy: Boolean!
   checkAccess(input: AuthorizationRequestInput!): AuthorizationResponseDto!
   getAuthorizationHistory(userId: String, resourceId: String, limit: Float = 100, offset: Float = 0): [AuthorizationLogDto!]!
 }

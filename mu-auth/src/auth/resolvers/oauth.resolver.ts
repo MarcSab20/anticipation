@@ -1,4 +1,4 @@
-// mu-auth/src/auth/resolvers/oauth.resolver.ts
+// mu-auth/src/auth/resolvers/oauth.resolver.ts - Version corrigée
 import { Resolver, Query, Mutation, Args, Context } from '@nestjs/graphql';
 import { Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { OAuthService } from '../services/oauth.service';
@@ -22,49 +22,44 @@ export class OAuthResolver {
   constructor(private readonly oauthService: OAuthService) {}
 
   /**
-   * Générer une URL d'autorisation OAuth
+   * Générer une URL d'autorisation OAuth - Version corrigée
    */
   @Mutation(() => OAuthAuthorizationResponse)
   async generateOAuthUrl(
     @Args('input') input: OAuthAuthorizationInput,
     @Context() context?: any
   ): Promise<OAuthAuthorizationResponse> {
+    const startTime = Date.now();
+    
     try {
       this.logger.log(`🔐 Generating OAuth URL for provider: ${input.provider}`);
 
+      // 🔧 FIX 1: Vérification précoce du provider
       if (!this.oauthService.isProviderEnabled(input.provider)) {
-        throw new HttpException(
-          `OAuth provider ${input.provider} is not enabled`,
-          HttpStatus.BAD_REQUEST
-        );
+        this.logger.error(`❌ OAuth provider ${input.provider} is not enabled or configured`);
+        return {
+          success: false,
+          authUrl: '',
+          state: '',
+          provider: input.provider,
+          message: `OAuth provider ${input.provider} is not enabled or configured`
+        };
       }
 
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('OAuth URL generation timeout')), 10000); // 10 secondes
-      });
-
-      const urlGenerationPromise = this.oauthService.getAuthorizationUrl({
-        provider: input.provider as 'google' | 'github',
-        redirectUri: input.redirectUri,
-        scopes: input.scopes,
-        additionalParams: {
-          userAgent: context?.req?.get('User-Agent'),
-          ip: context?.req?.ip
-        }
-      });
-
+      // 🔧 FIX 2: Suppression du timeout Promise.race problématique
+      this.logger.debug(`🔄 Calling OAuth service for ${input.provider}...`);
+      
       const result = await this.oauthService.getAuthorizationUrl({
         provider: input.provider as 'google' | 'github',
         redirectUri: input.redirectUri,
         scopes: input.scopes,
         additionalParams: {
-          //originalUrl: input.originalUrl,
           userAgent: context?.req?.get('User-Agent'),
           ip: context?.req?.ip
         }
       });
 
-      this.logger.log(`✅ OAuth URL generated successfully for ${input.provider}`);
+      this.logger.log(`✅ OAuth URL generated successfully for ${input.provider} in ${Date.now() - startTime}ms`);
 
       return {
         success: true,
@@ -76,28 +71,48 @@ export class OAuthResolver {
       };
 
     } catch (error) {
-      this.logger.error(`❌ Failed to generate OAuth URL for ${input.provider}:`, error);
+      const duration = Date.now() - startTime;
+      this.logger.error(`❌ Failed to generate OAuth URL for ${input.provider} after ${duration}ms:`, error);
       
+      // 🔧 FIX 3: Retourner une réponse d'erreur au lieu de throw
       return {
         success: false,
         authUrl: '',
         state: '',
         provider: input.provider,
-        message: error instanceof Error ? error.message : 'Unknown error occurred'
+        message: this.getErrorMessage(error)
       };
     }
   }
 
   /**
-   * Traiter un callback OAuth
+   * Traiter un callback OAuth - Version améliorée
    */
   @Mutation(() => OAuthCallbackResponse)
   async handleOAuthCallback(
     @Args('input') input: OAuthCallbackInput,
     @Context() context?: any
   ): Promise<OAuthCallbackResponse> {
+    const startTime = Date.now();
+    
     try {
       this.logger.log(`🔄 Processing OAuth callback for provider: ${input.provider}`);
+
+      // Validation des inputs
+      if (!input.code && !input.error) {
+        return {
+          success: false,
+          message: 'Missing authorization code or error information'
+        };
+      }
+
+      if (input.error) {
+        this.logger.warn(`⚠️ OAuth error received: ${input.error} - ${input.errorDescription || ''}`);
+        return {
+          success: false,
+          message: `OAuth error: ${input.error}${input.errorDescription ? ` - ${input.errorDescription}` : ''}`
+        };
+      }
 
       const result = await this.oauthService.handleCallback({
         provider: input.provider as 'google' | 'github',
@@ -107,8 +122,10 @@ export class OAuthResolver {
         error_description: input.errorDescription
       });
 
+      const duration = Date.now() - startTime;
+
       if (result.success && result.keycloakTokens) {
-        this.logger.log(`✅ OAuth callback processed successfully for ${input.provider}`);
+        this.logger.log(`✅ OAuth callback processed successfully for ${input.provider} in ${duration}ms`);
         
         return {
           success: true,
@@ -126,14 +143,14 @@ export class OAuthResolver {
           tokens: result.keycloakTokens ? {
             accessToken: result.keycloakTokens.access_token,
             refreshToken: result.keycloakTokens.refresh_token,
-            tokenType:  'Bearer',
+            tokenType: 'Bearer',
             expiresIn: result.keycloakTokens.expires_in,
             idToken: result.keycloakTokens.id_token
           } : undefined,
           message: result.message
         };
       } else {
-        this.logger.error(`❌ OAuth callback failed for ${input.provider}: ${result.error}`);
+        this.logger.error(`❌ OAuth callback failed for ${input.provider} in ${duration}ms: ${result.error}`);
         
         return {
           success: false,
@@ -142,11 +159,12 @@ export class OAuthResolver {
       }
 
     } catch (error) {
-      this.logger.error(`❌ OAuth callback processing failed for ${input.provider}:`, error);
+      const duration = Date.now() - startTime;
+      this.logger.error(`❌ OAuth callback processing failed for ${input.provider} after ${duration}ms:`, error);
       
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Callback processing failed'
+        message: this.getErrorMessage(error)
       };
     }
   }
@@ -335,6 +353,7 @@ export class OAuthResolver {
   async testOAuthProvider(@Args('provider') provider: string): Promise<boolean> {
     try {
       if (!this.oauthService.isProviderEnabled(provider)) {
+        this.logger.warn(`⚠️ OAuth provider ${provider} is not enabled`);
         return false;
       }
 
@@ -343,7 +362,15 @@ export class OAuthResolver {
       // Tests de configuration de base
       const hasRequiredConfig = !!(config?.clientId && config?.clientSecret && config?.redirectUri);
 
-      this.logger.log(`OAuth provider ${provider} test result: ${hasRequiredConfig}`);
+      this.logger.log(`🧪 OAuth provider ${provider} test result: ${hasRequiredConfig ? 'PASSED' : 'FAILED'}`);
+      
+      if (!hasRequiredConfig) {
+        this.logger.warn(`⚠️ OAuth provider ${provider} is missing required configuration:`, {
+          hasClientId: !!config?.clientId,
+          hasClientSecret: !!config?.clientSecret,
+          hasRedirectUri: !!config?.redirectUri
+        });
+      }
       
       return hasRequiredConfig;
 
@@ -353,14 +380,70 @@ export class OAuthResolver {
     }
   }
 
-  // Méthodes utilitaires privées
+  /**
+   * 🔧 Nouvelle méthode: Santé du service OAuth
+   */
+  @Query(() => Boolean)
+  async isOAuthServiceHealthy(): Promise<boolean> {
+    try {
+      const enabledProviders = this.oauthService.getEnabledProviders();
+      
+      if (enabledProviders.length === 0) {
+        this.logger.warn('⚠️ No OAuth providers are enabled');
+        return false;
+      }
+
+      // Tester chaque provider
+      const tests = await Promise.all(
+        enabledProviders.map(provider => this.testOAuthProvider(provider))
+      );
+
+      const allHealthy = tests.every(Boolean);
+      
+      this.logger.log(`🏥 OAuth service health check: ${allHealthy ? 'HEALTHY' : 'UNHEALTHY'} (${enabledProviders.length} providers)`);
+      
+      return allHealthy;
+
+    } catch (error) {
+      this.logger.error('❌ OAuth health check failed:', error);
+      return false;
+    }
+  }
+
+  // ============================================================================
+  // MÉTHODES UTILITAIRES PRIVÉES
+  // ============================================================================
+
+  private getErrorMessage(error: any): string {
+    if (error instanceof Error) {
+      // Masquer les détails sensibles en production
+      if (process.env.NODE_ENV === 'production') {
+        // Messages d'erreur génériques pour la production
+        if (error.message.includes('timeout')) {
+          return 'Service temporarily unavailable. Please try again.';
+        }
+        if (error.message.includes('connection') || error.message.includes('Redis')) {
+          return 'Connection error. Please try again later.';
+        }
+        if (error.message.includes('not found') || error.message.includes('not enabled')) {
+          return 'OAuth provider not available.';
+        }
+        return 'An error occurred during OAuth authentication.';
+      } else {
+        // Messages détaillés en développement
+        return error.message;
+      }
+    }
+    
+    return 'Unknown error occurred';
+  }
 
   private getProviderDisplayName(provider: string): string {
     const names: Record<string, string> = {
       google: 'Google',
       github: 'GitHub'
     };
-    return names[provider] || provider;
+    return names[provider] || provider.charAt(0).toUpperCase() + provider.slice(1);
   }
 
   private getProviderIconUrl(provider: string): string {
@@ -376,6 +459,6 @@ export class OAuthResolver {
       google: 'Sign in with your Google account',
       github: 'Sign in with your GitHub account'
     };
-    return descriptions[provider] || `Sign in with ${provider}`;
+    return descriptions[provider] || `Sign in with ${this.getProviderDisplayName(provider)}`;
   }
 }
