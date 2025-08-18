@@ -141,7 +141,7 @@ export class AuthResolver {
   @Mutation(() => Boolean)
  
 /**
- * 🔧 ENREGISTREMENT D'UN NOUVEL UTILISATEUR - VERSION CORRIGÉE
+ * 🔧 ENREGISTREMENT D'UN NOUVEL UTILISATEUR 
  */
 @Mutation(() => UserRegistrationResponseDto)
 async registerUser(
@@ -154,7 +154,7 @@ async registerUser(
   try {
     console.log(`🔐 [RESOLVER] Starting user registration for: ${input.username} (Request: ${requestId})`);
     
-    // 🔧 LOGGING DÉTAILLÉ DE LA REQUÊTE
+ 
     console.debug(`📋 [RESOLVER] Registration input:`, {
       username: input.username,
       email: input.email,

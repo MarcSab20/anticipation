@@ -1,4 +1,3 @@
-// smp-auth-ts/src/config/oauth.config.ts
 export interface OAuthProviderConfig {
   clientId: string;
   clientSecret: string;
@@ -11,22 +10,22 @@ export interface OAuthProviderConfig {
 }
 
 export interface GoogleOAuthConfig extends OAuthProviderConfig {
-  hostedDomain?: string; // Pour restreindre à un domaine G Suite
+  hostedDomain?: string; 
   accessType?: 'online' | 'offline';
   prompt?: 'none' | 'consent' | 'select_account';
 }
 
 export interface GitHubOAuthConfig extends OAuthProviderConfig {
   allowSignup?: boolean;
-  teamId?: string; // Pour restreindre à une équipe GitHub
-  organizationId?: string; // Pour restreindre à une organisation
+  teamId?: string; 
+  organizationId?: string; 
 }
 
 export interface OAuthConfig {
   google?: GoogleOAuthConfig;
   github?: GitHubOAuthConfig;
   keycloak: {
-    brokerCallbackUrl: string; // URL de callback vers Keycloak
+    brokerCallbackUrl: string; 
     defaultRoles: string[];
     autoCreateUser: boolean;
     syncMode: 'import' | 'legacy' | 'force';

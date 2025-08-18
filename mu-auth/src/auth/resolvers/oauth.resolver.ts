@@ -39,6 +39,20 @@ export class OAuthResolver {
         );
       }
 
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('OAuth URL generation timeout')), 10000); // 10 secondes
+      });
+
+      const urlGenerationPromise = this.oauthService.getAuthorizationUrl({
+        provider: input.provider as 'google' | 'github',
+        redirectUri: input.redirectUri,
+        scopes: input.scopes,
+        additionalParams: {
+          userAgent: context?.req?.get('User-Agent'),
+          ip: context?.req?.ip
+        }
+      });
+
       const result = await this.oauthService.getAuthorizationUrl({
         provider: input.provider as 'google' | 'github',
         redirectUri: input.redirectUri,

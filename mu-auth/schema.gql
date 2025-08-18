@@ -695,6 +695,77 @@ type AuthenticationLogDto {
   username: String
 }
 
+type OAuthUserInfo {
+  id: String!
+  email: String!
+  name: String
+  firstName: String
+  lastName: String
+  avatarUrl: String
+  username: String
+  verified: Boolean
+  provider: String!
+  locale: String
+}
+
+type OAuthTokenInfo {
+  accessToken: String!
+  tokenType: String!
+  expiresIn: Float!
+  refreshToken: String
+  scope: String
+  idToken: String
+}
+
+type OAuthAuthorizationResponse {
+  success: Boolean!
+  authUrl: String!
+  state: String!
+  provider: String!
+  expiresAt: String
+  message: String
+}
+
+type OAuthCallbackResponse {
+  success: Boolean!
+  userInfo: OAuthUserInfo
+  tokens: OAuthTokenInfo
+  message: String
+  error: String
+}
+
+type LinkedAccountInfo {
+  userId: String!
+  provider: String!
+  providerUserId: String!
+  email: String!
+  username: String
+  linkedAt: String!
+  lastSync: String
+  metadata: JSONObject
+}
+
+type OAuthProviderInfo {
+  name: String!
+  displayName: String!
+  enabled: Boolean!
+  scopes: [String!]!
+  authUrl: String!
+  supportsRefresh: Boolean!
+  iconUrl: String
+  description: String
+  configured: Boolean
+}
+
+type OAuthProviderStats {
+  provider: String!
+  attempts: Float!
+  successes: Float!
+  failures: Float!
+  averageResponseTime: Float!
+  lastUsed: String!
+}
+
 type AuthorizationResponseDto {
   """Indique si l'accès est autorisé"""
   allow: Boolean!
@@ -778,6 +849,10 @@ type Query {
   getTrustedDevices(userId: String!): [TrustedDeviceDto!]!
   isDeviceTrusted(userId: String!, deviceFingerprint: String!): Boolean!
   validateApplicationToken(input: ValidateApplicationTokenInput!): ApplicationTokenValidationResult!
+  getLinkedOAuthAccounts(userId: String!): [LinkedAccountInfo!]!
+  getAvailableOAuthProviders: [OAuthProviderInfo!]!
+  getOAuthProviderStatus(provider: String!): OAuthProviderInfo
+  testOAuthProvider(provider: String!): Boolean!
   checkAccess(input: AuthorizationRequestInput!): AuthorizationResponseDto!
   getAuthorizationHistory(userId: String, resourceId: String, limit: Float = 100, offset: Float = 0): [AuthorizationLogDto!]!
 }
@@ -921,6 +996,11 @@ type Mutation {
   authenticateApp(input: AppLoginInput!): AppLoginResponse!
   refreshApplicationAccessToken(input: RefreshApplicationTokenInput!): AppLoginResponse!
   logoutApp(input: LogoutApplicationInput!): ApplicationLogoutResponse!
+  generateOAuthUrl(input: OAuthAuthorizationInput!): OAuthAuthorizationResponse!
+  handleOAuthCallback(input: OAuthCallbackInput!): OAuthCallbackResponse!
+  linkOAuthAccount(input: OAuthLinkAccountInput!): Boolean!
+  unlinkOAuthAccount(input: OAuthUnlinkAccountInput!): Boolean!
+  refreshOAuthToken(input: OAuthRefreshTokenInput!): OAuthTokenInfo
 }
 
 input LoginInputDto {
@@ -1150,4 +1230,35 @@ input RefreshApplicationTokenInput {
 input LogoutApplicationInput {
   appID: String!
   accessToken: String!
+}
+
+input OAuthAuthorizationInput {
+  provider: String!
+  redirectUri: String
+  scopes: [String!]
+  originalUrl: String
+}
+
+input OAuthCallbackInput {
+  provider: String!
+  code: String!
+  state: String!
+  error: String
+  errorDescription: String
+}
+
+input OAuthLinkAccountInput {
+  userId: String!
+  provider: String!
+  providerUserId: String!
+}
+
+input OAuthUnlinkAccountInput {
+  userId: String!
+  provider: String!
+}
+
+input OAuthRefreshTokenInput {
+  userId: String!
+  provider: String!
 }

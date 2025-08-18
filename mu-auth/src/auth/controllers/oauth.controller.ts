@@ -95,11 +95,7 @@ export class OAuthController {
         provider: query.provider,
         redirectUri: query.redirectUri,
         scopes: query.scopes,
-        additionalParams: {
-          originalUrl: query.originalUrl,
-          userAgent: req.get('User-Agent'),
-          ip: req.ip
-        }
+        
       });
 
       this.logger.log(`✅ OAuth authorization URL generated for ${query.provider}`);
@@ -123,13 +119,14 @@ export class OAuthController {
    */
   @Get('callback/:provider')
   async callback(
+    @Res() res: Response,
     @Param('provider') provider: string,
     @Query('code') code: string,
     @Query('state') state: string,
     @Query('error') error?: string,
     @Query('error_description') errorDescription?: string,
-    @Req() req: Request,
-    @Res() res: Response
+    //@Req() req: Request,
+    
   ): Promise<void> {
     try {
       this.logger.log(`🔄 Processing OAuth callback for provider: ${provider}`);
@@ -154,7 +151,7 @@ export class OAuthController {
         // Option 1: Redirection avec tokens en query params (moins sécurisé)
         const params = new URLSearchParams({
           access_token: result.keycloakTokens.access_token,
-          token_type: result.keycloakTokens.token_type || 'Bearer',
+          token_type: 'Bearer',
           expires_in: result.keycloakTokens.expires_in.toString(),
           provider,
           email: result.userInfo?.email || '',
@@ -225,7 +222,7 @@ export class OAuthController {
             tokens: result.keycloakTokens ? {
               accessToken: result.keycloakTokens.access_token,
               refreshToken: result.keycloakTokens.refresh_token,
-              tokenType: result.keycloakTokens.token_type || 'Bearer',
+              tokenType:  'Bearer',
               expiresIn: result.keycloakTokens.expires_in
             } : undefined
           },
