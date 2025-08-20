@@ -1,4 +1,4 @@
-// mu-auth/src/auth/services/oauth.service.ts - VERSION CORRIGÉE avec gestion des timeouts
+// mu-auth/src/auth/services/oauth.service.ts - VERSION CORRIGÉE avec gestion améliorée des timeouts
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth.service';
@@ -26,13 +26,14 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
   private isInitialized = false;
   private initializationPromise: Promise<void> | null = null;
 
-  // ✅ CONFIGURATION DES TIMEOUTS
+  // ✅ CONFIGURATION DES TIMEOUTS OPTIMISÉE
   private readonly TIMEOUTS = {
-    NETWORK_TIMEOUT: 30000,        // 30 secondes pour les appels réseau
-    RETRY_ATTEMPTS: 3,             // 3 tentatives
-    RETRY_DELAY: 2000,             // 2 secondes entre les tentatives
-    CONNECTION_TIMEOUT: 15000,     // 15 secondes pour établir la connexion
-    OAUTH_STATE_TTL: 600,          // 10 minutes pour l'état OAuth
+    NETWORK_TIMEOUT: 60000,        
+    RETRY_ATTEMPTS: 3,             
+    RETRY_DELAY: 3000,             
+    CONNECTION_TIMEOUT: 30000,     
+    OAUTH_STATE_TTL: 600,          
+    OAUTH_CALLBACK_TIMEOUT: 90000, 
   };
 
   constructor(
@@ -52,9 +53,9 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
 
   private async initializeService(): Promise<void> {
     try {
-      this.logger.log('🔄 Initializing OAuth service with enhanced timeout management...');
+      this.logger.log('🔄 Initializing OAuth service with enhanced error handling...');
       
-      // ✅ CORRECTION 1: Configuration avec timeouts
+      // ✅ CORRECTION 1: Configuration avec validation précoce
       await this.loadAndValidateConfig();
       
       const hasEnabledProvider = 
@@ -68,7 +69,7 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // ✅ CORRECTION 2: Initialisation avec retry et timeout
+      // ✅ CORRECTION 2: Initialisation avec meilleure gestion d'erreurs
       await this.initializeSmpAuthOAuthWithRetry();
 
       const enabledProviders = this.getEnabledProviders();
@@ -85,20 +86,27 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * ✅ CORRECTION 3: Configuration avec URLs corrigées et timeouts
+   * ✅ CORRECTION 3: Configuration avec URLs et timeouts améliorés
    */
   private async loadAndValidateConfig(): Promise<void> {
     try {
-      // ✅ URLs de redirection corrigées
-      const authAppUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
-      const apiUrl = this.configService.get<string>('API_URL', 'http://localhost:3001');
+      // ✅ URLs de redirection corrigées avec détection d'environnement
+      const nodeEnv = this.configService.get<string>('NODE_ENV', 'development');
+      const authAppUrl = this.configService.get<string>('FRONTEND_URL') || 
+        (nodeEnv === 'production' ? 'https://your-domain.com' : 'http://localhost:3000');
+      const apiUrl = this.configService.get<string>('API_URL') || 
+        (nodeEnv === 'production' ? 'https://api.your-domain.com' : 'http://localhost:3001');
+      
+      this.logger.log(`🔍 Using environment: ${nodeEnv}`);
+      this.logger.log(`🔍 Frontend URL: ${authAppUrl}`);
+      this.logger.log(`🔍 API URL: ${apiUrl}`);
       
       this.config = loadOAuthConfig({
         google: {
           clientId: this.configService.get<string>('GOOGLE_CLIENT_ID', ''),
           clientSecret: this.configService.get<string>('GOOGLE_CLIENT_SECRET', ''),
           redirectUri: this.configService.get<string>('GOOGLE_REDIRECT_URI') || 
-            `${authAppUrl}/oauth/callback`, // ✅ CORRECTION: Frontend URL
+            `${authAppUrl}/oauth/callback`, // ✅ CORRECTION: Utiliser le frontend, pas l'API
           scopes: this.configService.get<string>('GOOGLE_SCOPES', 'openid,email,profile').split(','),
           authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
           tokenUrl: 'https://oauth2.googleapis.com/token',
@@ -112,7 +120,7 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
           clientId: this.configService.get<string>('GITHUB_CLIENT_ID', ''),
           clientSecret: this.configService.get<string>('GITHUB_CLIENT_SECRET', ''),
           redirectUri: this.configService.get<string>('GITHUB_REDIRECT_URI') || 
-            `${authAppUrl}/oauth/callback`, 
+            `${authAppUrl}/oauth/callback`, // ✅ CORRECTION: Utiliser le frontend
           scopes: this.configService.get<string>('GITHUB_SCOPES', 'user:email,read:user').split(','),
           authUrl: 'https://github.com/login/oauth/authorize',
           tokenUrl: 'https://github.com/login/oauth/access_token',
@@ -120,6 +128,7 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
           enabled: this.configService.get<boolean>('GITHUB_OAUTH_ENABLED', false),
           allowSignup: this.configService.get<boolean>('GITHUB_ALLOW_SIGNUP', true),
           organizationId: this.configService.get<string>('GITHUB_ORGANIZATION_ID'),
+          // ✅ CORRECTION 4: Timeouts spécifiques à GitHub
           timeout: this.TIMEOUTS.NETWORK_TIMEOUT,
           retryAttempts: this.TIMEOUTS.RETRY_ATTEMPTS,
           retryDelay: this.TIMEOUTS.RETRY_DELAY,
@@ -129,13 +138,7 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
           defaultRoles: this.configService.get<string>('OAUTH_DEFAULT_ROLES', 'USER').split(','),
           autoCreateUser: this.configService.get<boolean>('OAUTH_AUTO_CREATE_USER', true),
           syncMode: 'import'
-        },
-        // network: {
-        //   timeout: this.TIMEOUTS.NETWORK_TIMEOUT,
-        //   retryAttempts: this.TIMEOUTS.RETRY_ATTEMPTS,
-        //   retryDelay: this.TIMEOUTS.RETRY_DELAY,
-        //   connectionTimeout: this.TIMEOUTS.CONNECTION_TIMEOUT,
-        // }
+        }
       });
 
       const validation = await validateOAuthConfig(this.config);
@@ -158,7 +161,7 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * ✅ CORRECTION 4: Initialisation avec gestion des timeouts et retry
+   * ✅ CORRECTION 5: Initialisation avec gestion robuste des erreurs
    */
   private async initializeSmpAuthOAuthWithRetry(): Promise<void> {
     const maxRetries = this.TIMEOUTS.RETRY_ATTEMPTS;
@@ -168,16 +171,18 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
       try {
         this.logger.debug(`🔄 Creating OAuth service (attempt ${retryCount + 1}/${maxRetries})`);
 
-        // ✅ Configuration avec timeouts
+        // ✅ Configuration avec timeouts et validation de connectivité
         const redisConfig = {
           host: this.configService.get<string>('REDIS_HOST', 'localhost'),
           port: this.configService.get<number>('REDIS_PORT', 6379),
           password: this.configService.get<string>('REDIS_PASSWORD'),
           db: this.configService.get<number>('REDIS_DB', 0),
           prefix: this.configService.get<string>('OAUTH_REDIS_PREFIX', 'oauth:'),
-          // ✅ AJOUT: Timeouts Redis
+          // ✅ AJOUT: Timeouts Redis optimisés
           connectTimeout: this.TIMEOUTS.CONNECTION_TIMEOUT,
           commandTimeout: this.TIMEOUTS.NETWORK_TIMEOUT,
+          retryDelayOnFailover: this.TIMEOUTS.RETRY_DELAY,
+          maxRetriesPerRequest: 2,
         };
 
         const keycloakConfig = {
@@ -187,8 +192,10 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
           clientSecret: this.configService.get<string>('KEYCLOAK_CLIENT_SECRET', ''),
           adminClientId: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_ID'),
           adminClientSecret: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_SECRET'),
-          // ✅ AJOUT: Timeouts Keycloak
+          // ✅ AJOUT: Timeouts Keycloak optimisés
           timeout: this.TIMEOUTS.NETWORK_TIMEOUT,
+          retryAttempts: 2,
+          retryDelay: this.TIMEOUTS.RETRY_DELAY,
         };
 
         this.logger.debug('🔄 Creating Redis client for OAuth...');
@@ -199,9 +206,6 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
 
         this.logger.debug('🔄 Creating OAuth service implementation...');
         this.oauthServiceImpl = createOAuthServiceFromEnv(redisClient, keycloakClient);
-
-        // ✅ CORRECTION 5: Test de connectivité avec timeout
-        await this.testConnectivityWithTimeout(redisClient);
 
         this.setupEventHandlers();
         
@@ -224,30 +228,9 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * ✅ CORRECTION 6: Test de connectivité avec timeout
-   */
-  private async testConnectivityWithTimeout(redisClient: any): Promise<void> {
-    try {
-      this.logger.debug('🧪 Testing Redis connection with timeout...');
-      
-      const connectivityTest = Promise.race([
-        redisClient.ping(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Redis connectivity test timeout')), this.TIMEOUTS.CONNECTION_TIMEOUT)
-        )
-      ]);
-      
-      await connectivityTest;
-      this.logger.debug('✅ Redis connection test passed');
-    } catch (error) {
-      this.logger.warn('⚠️ Redis connection test failed, but continuing...', error);
-      // Ne pas faire échouer l'initialisation pour Redis
-    }
-  }
 
   /**
-   * ✅ CORRECTION 7: Méthodes publiques avec gestion des timeouts
+   * ✅ CORRECTION 8: Méthodes publiques avec timeouts et retry
    */
   private ensureInitialized(): void {
     if (!this.isInitialized || !this.oauthServiceImpl) {
@@ -259,11 +242,11 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
     this.ensureInitialized();
     
     try {
-      // ✅ AJOUT: Timeout pour la génération d'URL
+      // ✅ AJOUT: Timeout plus court pour la génération d'URL (opération locale)
       const urlGeneration = Promise.race([
         this.oauthServiceImpl!.getAuthorizationUrl(request),
         new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('OAuth URL generation timeout')), 10000)
+          setTimeout(() => reject(new Error('OAuth URL generation timeout')), 15000)
         )
       ]);
       
@@ -284,10 +267,11 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
     try {
       this.logger.log(`🔄 Processing OAuth callback for ${request.provider} with code: ${request.code?.substring(0, 10)}...`);
       
-      // ✅ AJOUT: Timeout pour le callback avec retry
+      // ✅ CORRECTION 9: Timeout plus long pour le callback (opération réseau complexe)
       const callbackResult = await this.executeWithRetry(
         () => this.oauthServiceImpl!.handleCallback(request),
-        `OAuth callback for ${request.provider}`
+        `OAuth callback for ${request.provider}`,
+        this.TIMEOUTS.OAUTH_CALLBACK_TIMEOUT // Timeout spécial pour callback
       );
       
       if (callbackResult.success) {
@@ -310,7 +294,7 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * ✅ CORRECTION 8: Exécution avec retry et timeout
+   * ✅ CORRECTION 10: Exécution avec retry et timeout améliorés
    */
   private async executeWithRetry<T>(
     operation: () => Promise<T>,
@@ -323,10 +307,13 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
       try {
         this.logger.debug(`🔄 ${operationName} (attempt ${attempt}/${this.TIMEOUTS.RETRY_ATTEMPTS})`);
         
+        // ✅ FIX: Timeout adaptatif basé sur le nombre de tentatives
+        const adaptiveTimeout = timeoutMs + ((attempt - 1) * 15000); // +15s par tentative
+        
         const operationWithTimeout = Promise.race([
           operation(),
           new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error(`${operationName} timeout after ${timeoutMs}ms`)), timeoutMs)
+            setTimeout(() => reject(new Error(`${operationName} timeout after ${adaptiveTimeout}ms`)), adaptiveTimeout)
           )
         ]);
         
@@ -343,8 +330,16 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
         
         this.logger.warn(`⚠️ ${operationName} failed on attempt ${attempt}: ${lastError.message}`);
         
+        // ✅ FIX: Vérifier si l'erreur est retryable
+        const isRetryable = this.isErrorRetryable(lastError);
+        
+        if (!isRetryable || attempt >= this.TIMEOUTS.RETRY_ATTEMPTS) {
+          this.logger.error(`❌ ${operationName} failed definitively: ${lastError.message} (retryable: ${isRetryable})`);
+          break;
+        }
+        
         if (attempt < this.TIMEOUTS.RETRY_ATTEMPTS) {
-          const delay = this.TIMEOUTS.RETRY_DELAY * attempt;
+          const delay = this.TIMEOUTS.RETRY_DELAY * Math.pow(2, attempt - 1); // Backoff exponentiel
           this.logger.debug(`⏳ Waiting ${delay}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
@@ -352,6 +347,35 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
     }
     
     throw lastError || new Error(`${operationName} failed after ${this.TIMEOUTS.RETRY_ATTEMPTS} attempts`);
+  }
+
+  /**
+   * ✅ CORRECTION 11: Détection d'erreurs retryables améliorée
+   */
+  private isErrorRetryable(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    
+    // Erreurs de réseau retryables
+    const retryablePatterns = [
+      'timeout',
+      'etimedout', 
+      'econnrefused',
+      'econnreset',
+      'enotfound',
+      'ehostunreach',
+      'socket hang up',
+      'network error',
+      'connection refused',
+      'request timeout to github api',
+      'github api server error',
+      'rate limit'
+    ];
+    
+    const isRetryable = retryablePatterns.some(pattern => message.includes(pattern));
+    
+    this.logger.debug(`🔍 Error retryability check: "${error.message}" -> ${isRetryable}`);
+    
+    return isRetryable;
   }
 
   /**
@@ -363,7 +387,8 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
     try {
       return await this.executeWithRetry(
         () => this.oauthServiceImpl!.linkAccount(userId, provider, providerUserId),
-        `Link account ${provider} for user ${userId}`
+        `Link account ${provider} for user ${userId}`,
+        10000 // Timeout plus court pour les opérations de DB
       );
     } catch (error) {
       this.logger.error(`❌ Failed to link ${provider} account for user ${userId}:`, error);
@@ -377,7 +402,8 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
     try {
       return await this.executeWithRetry(
         () => this.oauthServiceImpl!.unlinkAccount(userId, provider),
-        `Unlink account ${provider} for user ${userId}`
+        `Unlink account ${provider} for user ${userId}`,
+        10000
       );
     } catch (error) {
       this.logger.error(`❌ Failed to unlink ${provider} account for user ${userId}:`, error);
@@ -392,7 +418,7 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
       return await this.executeWithRetry(
         () => this.oauthServiceImpl!.getLinkedAccounts(userId),
         `Get linked accounts for user ${userId}`,
-        5000 // Timeout plus court pour les lectures
+        15000 // Timeout plus court pour les lectures
       );
     } catch (error) {
       this.logger.error(`❌ Failed to get linked accounts for user ${userId}:`, error);
@@ -406,7 +432,8 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
     try {
       return await this.executeWithRetry(
         () => this.oauthServiceImpl!.refreshProviderToken(userId, provider),
-        `Refresh ${provider} token for user ${userId}`
+        `Refresh ${provider} token for user ${userId}`,
+        this.TIMEOUTS.NETWORK_TIMEOUT
       );
     } catch (error) {
       this.logger.error(`❌ Failed to refresh ${provider} token for user ${userId}:`, error);
@@ -437,13 +464,14 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * ✅ Logging amélioré
+   * ✅ Logging et debugging améliorés
    */
   private logProviderStatus(): void {
-    this.logger.warn('🔧 To enable OAuth:');
+    this.logger.warn('🔧 To enable OAuth providers:');
     this.logger.warn('   - For Google: Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_OAUTH_ENABLED=true');
     this.logger.warn('   - For GitHub: Set GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_OAUTH_ENABLED=true');
-    this.logger.warn('   - Ensure redirect URIs point to frontend: http://localhost:3000/oauth/callback');
+    this.logger.warn('   - Ensure redirect URIs point to frontend (not API)');
+    this.logger.warn('   - Example redirect URI: http://localhost:3000/oauth/callback');
   }
 
   private logConfigurationStatus(): void {
@@ -461,6 +489,7 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
       const redirectUri = config?.redirectUri || 'NOT SET';
       
       this.logger.log(`🔍 ${provider.toUpperCase()}: ${status} ${enabled ? 'ENABLED' : 'DISABLED'} ${configured ? 'CONFIGURED' : 'NOT CONFIGURED'}`);
+      this.logger.log(`🔍   Client ID: ${config?.clientId ? `${config.clientId.substring(0, 10)}...` : 'NOT SET'}`);
       this.logger.log(`🔍   Redirect URI: ${redirectUri}`);
       
       if (enabled && !configured) {
@@ -475,13 +504,13 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
     if (error instanceof Error) {
       const message = error.message.toLowerCase();
       
-      // ✅ Messages d'erreur spécifiques aux timeouts
+      // ✅ Messages d'erreur spécifiques aux timeouts et réseau
       if (message.includes('timeout') || message.includes('etimedout')) {
-        return 'Connection timeout. Please check your network connection and try again.';
+        return 'Connection timeout. This may be due to network issues or GitHub API being slow. Please try again.';
       }
       
       if (message.includes('network') || message.includes('econnreset') || message.includes('enotfound')) {
-        return 'Network connection error. Please check your internet connection.';
+        return 'Network connection error. Please check your internet connection and try again.';
       }
       
       if (message.includes('access_denied')) {
@@ -490,6 +519,10 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
       
       if (message.includes('invalid_grant') || message.includes('expired')) {
         return 'OAuth session expired. Please try again.';
+      }
+      
+      if (message.includes('github oauth error')) {
+        return error.message; // Garder le message spécifique GitHub
       }
       
       return process.env.NODE_ENV === 'development' ? error.message : 'OAuth authentication failed';

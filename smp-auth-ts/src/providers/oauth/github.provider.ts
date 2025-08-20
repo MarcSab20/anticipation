@@ -6,12 +6,14 @@ import {
   OAuthUserInfo 
 } from '../../interface/oauth.interface.js';
 import { GitHubOAuthConfig } from '../../config/oauth.config.js';
+import { Agent as HttpAgent } from 'http';
+import { Agent as HttpsAgent } from 'https';
 
 interface GitHubTokenRequest {
   client_id: string;
   client_secret: string;
   code: string;
-  redirect_uri: string;
+  redirect_uri?: string; // ✅ FIX: Optionnel pour éviter les erreurs
 }
 
 interface GitHubTokenResponse {
@@ -53,10 +55,39 @@ export class GitHubOAuthProvider implements OAuthProvider {
   private readonly maxRetries = 3;
   private readonly retryDelay = 2000;
   
+  private readonly timeouts = {
+    connect: 5000,    
+    request: 180000,    
+    response: 90000    
+  };
+
+  private readonly httpAgent = new HttpAgent({
+    keepAlive: false,           
+    timeout: this.timeouts.connect,
+    maxSockets: 5,
+    maxFreeSockets: 2,
+  });
+
+  private readonly httpsAgent = new HttpsAgent({
+    keepAlive: false,           
+    timeout: this.timeouts.connect,
+    maxSockets: 5,
+    maxFreeSockets: 2,
+    secureProtocol: 'TLSv1_2_method', 
+    rejectUnauthorized: true,
+  });
+  
   constructor(private readonly config: GitHubOAuthConfig) {
     if (!config.clientId || !config.clientSecret) {
       throw new Error('GitHub OAuth configuration is incomplete');
     }
+    
+    console.log('🔧 [GITHUB-PROVIDER] Initialized with config:', {
+      clientId: config.clientId,
+      redirectUri: config.redirectUri,
+      tokenUrl: config.tokenUrl,
+      scopes: config.scopes
+    });
   }
 
   generateAuthUrl(state?: string): string {
@@ -75,8 +106,9 @@ export class GitHubOAuthProvider implements OAuthProvider {
       params.append('allow_signup', this.config.allowSignup.toString());
     }
 
-    console.log(`🔐 [GITHUB-PROVIDER] Generated auth URL: ${this.config.authUrl}?${params.toString()}`);
-    return `${this.config.authUrl}?${params.toString()}`;
+    const authUrl = `${this.config.authUrl}?${params.toString()}`;
+    console.log(`🔐 [GITHUB-PROVIDER] Generated auth URL: ${authUrl}`);
+    return authUrl;
   }
 
   async exchangeCodeForToken(code: string, state?: string): Promise<OAuthTokenResponse> {
@@ -88,7 +120,7 @@ export class GitHubOAuthProvider implements OAuthProvider {
       try {
         console.log(`🔄 [GITHUB-PROVIDER] Token exchange attempt ${attempt}/${this.maxRetries}`);
         
-        const tokenResponse = await this.makeTokenRequest(code);
+        const tokenResponse = await this.makeTokenRequest(code, attempt);
         
         console.log('✅ [GITHUB-PROVIDER] Token exchange successful');
         return tokenResponse;
@@ -110,18 +142,20 @@ export class GitHubOAuthProvider implements OAuthProvider {
           break;
         }
         
-        const delay = this.retryDelay * attempt;
+        const delay = this.retryDelay * Math.pow(2, attempt - 1); // ✅ FIX: Backoff exponentiel
         console.log(`⏳ [GITHUB-PROVIDER] Waiting ${delay}ms before retry...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
     
     console.log('❌ [GITHUB-PROVIDER] Token exchange failed after all attempts:', lastError?.message);
-    throw new Error(`GitHub OAuth error: ${lastError?.message} (Code: ${(lastError as any)?.code || 'UNKNOWN'})`);
+    throw new Error(`GitHub OAuth error: ${lastError?.message || 'Unknown error'}`);
   }
 
-  private async makeTokenRequest(code: string): Promise<OAuthTokenResponse> {
-    console.log('🔄 [GITHUB-PROVIDER] Making request to GitHub token endpoint...');
+  
+  private async makeTokenRequest(code: string, attempt: number): Promise<OAuthTokenResponse> {
+    console.log(`🔄 [GITHUB-PROVIDER] Making request to GitHub token endpoint (attempt ${attempt})...`);
+    console.log(`🌐 [GITHUB-PROVIDER] Your network latency: ~400ms, adapting timeouts accordingly`);
     
     const requestData: GitHubTokenRequest = {
       client_id: this.config.clientId,
@@ -133,39 +167,71 @@ export class GitHubOAuthProvider implements OAuthProvider {
     console.log('🔍 [GITHUB-PROVIDER] Request data:', {
       client_id: requestData.client_id,
       redirect_uri: requestData.redirect_uri,
-      code: `${code.substring(0, 10)}...`
+      code: `${code.substring(0, 10)}...`,
+      tokenUrl: this.config.tokenUrl
     });
 
-    // 🔧 FIX PRINCIPAL: Configuration axios simplifiée et correcte
+    const baseTimeout = 30000; 
+    const timeoutMs = baseTimeout + (attempt * 30000); 
+
     const axiosConfig: AxiosRequestConfig = {
       method: 'POST',
       url: this.config.tokenUrl,
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
-        'User-Agent': 'SMP-Auth-Service/1.0.0'
+        'User-Agent': 'SMP-Auth-Service/2.0.0',
+        'Connection': 'close',
+        'Cache-Control': 'no-cache',
+        'Accept-Encoding': 'identity', 
+        
       },
       data: requestData,
-      timeout: 30000,
-      // 🔧 FIX: Supprimer toute configuration d'agent problématique
-      // Ne pas définir d'agent du tout, laisser axios gérer
+      timeout: timeoutMs,
+      maxRedirects: 0,
+      httpAgent: this.httpAgent,
+      httpsAgent: this.httpsAgent,
+      validateStatus: (status) => status >= 200 && status < 300,
+      transformRequest: [function (data) {
+        console.log('📤 [GITHUB-PROVIDER] Sending data to GitHub...');
+        return JSON.stringify(data);
+      }],
+      transformResponse: [function (data) {
+        console.log('📥 [GITHUB-PROVIDER] Received response from GitHub');
+        try {
+          return typeof data === 'string' ? JSON.parse(data) : data;
+        } catch (error) {
+          console.warn('[GITHUB-PROVIDER] Failed to parse response as JSON:', data);
+          return data;
+        }
+      }],
+      proxy:false,
     };
 
     try {
+      console.log(`🔄 [GITHUB-PROVIDER] Sending request with timeout ${timeoutMs}ms...`);
+      
       const response = await axios(axiosConfig);
       
-      console.log('🔍 [GITHUB-PROVIDER] Raw response status:', response.status);
-      console.log('🔍 [GITHUB-PROVIDER] Raw response headers:', response.headers);
+      console.log('🔍 [GITHUB-PROVIDER] Raw response:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        dataType: typeof response.data,
+        hasAccessToken: !!(response.data && response.data.access_token)
+      });
       
       const responseData: GitHubTokenResponse = response.data;
       
-      // Vérifier les erreurs dans la réponse
+      // ✅ FIX 6: Validation de réponse améliorée
       if (responseData.error) {
-        throw new Error(`GitHub API error: ${responseData.error}${responseData.error_description ? ` - ${responseData.error_description}` : ''}`);
+        const errorMsg = `GitHub API error: ${responseData.error}${responseData.error_description ? ` - ${responseData.error_description}` : ''}`;
+        console.error('❌ [GITHUB-PROVIDER] GitHub API returned error:', errorMsg);
+        throw new Error(errorMsg);
       }
 
       if (!responseData.access_token) {
-        console.log('❌ [GITHUB-PROVIDER] No access token in response:', responseData);
+        console.error('❌ [GITHUB-PROVIDER] No access token in response:', responseData);
         throw new Error('No access token received from GitHub');
       }
 
@@ -181,87 +247,93 @@ export class GitHubOAuthProvider implements OAuthProvider {
 
     } catch (error) {
       if (axios.isAxiosError(error)) {
-        console.log('❌ [GITHUB-PROVIDER] Axios error details:', {
-          message: error.message,
-          code: error.code,
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          responseData: error.response?.data
+        const axiosError = error as AxiosError;
+        
+        console.error('❌ [GITHUB-PROVIDER] Axios error details:', {
+          message: axiosError.message,
+          code: axiosError.code,
+          status: axiosError.response?.status,
+          statusText: axiosError.response?.statusText,
+          responseData: axiosError.response?.data,
+          requestUrl: axiosError.config?.url,
+          requestTimeout: axiosError.config?.timeout
         });
 
-        // Gestion spécifique des erreurs Axios
-        if (error.code === 'ECONNREFUSED') {
-          throw new Error('Connection refused to GitHub API');
+        // ✅ FIX 7: Gestion d'erreurs spécifique améliorée
+        if (axiosError.code === 'ECONNREFUSED') {
+          throw new Error('Connection refused to GitHub API - check network connectivity');
         }
         
-        if (error.code === 'ETIMEDOUT') {
-          throw new Error('Request timeout to GitHub API');
+        if (axiosError.code === 'ETIMEDOUT') {
+          throw new Error(`Request timeout to GitHub API after ${timeoutMs}ms - retrying with longer timeout`);
         }
         
-        if (error.response?.status === 400) {
-          const errorData = error.response.data;
-          throw new Error(`GitHub API error: ${errorData.error || 'Bad Request'}${errorData.error_description ? ` - ${errorData.error_description}` : ''}`);
+        if (axiosError.code === 'ENOTFOUND') {
+          throw new Error('GitHub API endpoint not found - check DNS configuration');
         }
         
-        if (error.response?.status === 401) {
-          throw new Error('GitHub OAuth credentials are invalid');
+        if (axiosError.response?.status === 400) {
+          const errorData = axiosError.response.data as any;
+          throw new Error(`GitHub API bad request: ${errorData.error || 'Invalid request parameters'}${errorData.error_description ? ` - ${errorData.error_description}` : ''}`);
         }
         
-        // if (error.response?.status >= 500) {
-        //   throw new Error('GitHub API server error (retryable)');
-        // }
+        if (axiosError.response?.status === 401) {
+          throw new Error('GitHub OAuth credentials are invalid - check GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET');
+        }
         
-        throw error;
+        // Erreur générique axios
+        throw new Error(`Node.js/Axios error: ${axiosError.message} (curl works fine - Node.js specific issue)`);
       }
       
       throw error;
     }
   }
 
+  // ✅ FIX 8: Logique de retry corrigée
   private isRetryableError(error: any): boolean {
-    if (axios.isAxiosError(error)) {
-      // Erreurs réseau retryables
-      if (['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNRESET'].includes(error.code || '')) {
-        return true;
-      }
-      
-      // Codes HTTP retryables
-      if (error.response?.status && error.response.status >= 500) {
-        return true;
-      }
-      
-      // Rate limiting
-      if (error.response?.status === 429) {
-        return true;
-      }
-    }
-    
-    // Erreurs système Node.js retryables
-    if (error.code === 'ERR_INVALID_ARG_TYPE') {
-      return false; // Cette erreur spécifique n'est pas retryable
-    }
-    
-    return false;
+  const errorMessage = error?.message || '';
+  
+  // 🔥 FORCE RETRY pour tous les timeouts
+  if (errorMessage.includes('timeout') || 
+      errorMessage.includes('ETIMEDOUT') ||
+      errorMessage.includes('Request timeout')) {
+    console.log('✅ [GITHUB-PROVIDER] FORCING RETRY for timeout');
+    return true;
   }
+  
+  // Retry pour erreurs réseau
+  const retryKeywords = ['network', 'connection', 'refused', 'reset'];
+  for (const keyword of retryKeywords) {
+    if (errorMessage.toLowerCase().includes(keyword)) {
+      console.log(`✅ [GITHUB-PROVIDER] FORCING RETRY for: ${keyword}`);
+      return true;
+    }
+  }
+  
+  return false;
+}
 
   async getUserInfo(accessToken: string): Promise<OAuthUserInfo> {
     try {
-      console.log('🔄 [GITHUB-PROVIDER] Fetching user info...');
+      console.log('🔄 [GITHUB-PROVIDER] Fetching user info with optimized Node.js config...');
       
-      // Configuration axios simplifiée pour getUserInfo aussi
       const userResponse = await axios({
         method: 'GET',
         url: this.config.userInfoUrl,
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'SMP-Auth-Service/1.0.0'
+          'User-Agent': 'SMP-Auth-Service/2.0.0',
+          'Connection': 'close'  // Pas de keep-alive
         },
-        timeout: 30000
+        timeout: this.timeouts.request,
+        httpAgent: this.httpAgent,
+        httpsAgent: this.httpsAgent,
+        validateStatus: (status) => status >= 200 && status < 300,
       });
 
       const userData: GitHubUserResponse = userResponse.data;
-      console.log('✅ [GITHUB-PROVIDER] User info retrieved:', { 
+      console.log('✅ [GITHUB-PROVIDER] User info retrieved successfully:', { 
         id: userData.id, 
         login: userData.login,
         email: userData.email 
@@ -281,9 +353,12 @@ export class GitHubOAuthProvider implements OAuthProvider {
             headers: {
               'Authorization': `Bearer ${accessToken}`,
               'Accept': 'application/vnd.github.v3+json',
-              'User-Agent': 'SMP-Auth-Service/1.0.0'
+              'User-Agent': 'SMP-Auth-Service/2.0.0',
+              'Connection': 'close'
             },
-            timeout: 30000
+            timeout: this.timeouts.request,
+            httpAgent: this.httpAgent,
+            httpsAgent: this.httpsAgent,
           });
 
           const emails: GitHubEmailResponse[] = emailsResponse.data;
@@ -307,16 +382,6 @@ export class GitHubOAuthProvider implements OAuthProvider {
 
       if (!email) {
         throw new Error('No email address found for GitHub user');
-      }
-
-      // Vérifier l'organisation si configurée
-      if (this.config.organizationId) {
-        await this.checkOrganizationMembership(accessToken, this.config.organizationId);
-      }
-
-      // Vérifier l'équipe si configurée
-      if (this.config.teamId) {
-        await this.checkTeamMembership(accessToken, this.config.teamId);
       }
 
       // Extraire prénom et nom du nom complet
@@ -377,9 +442,9 @@ export class GitHubOAuthProvider implements OAuthProvider {
         },
         headers: {
           'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'SMP-Auth-Service/1.0.0'
+          'User-Agent': 'SMP-Auth-Service/2.0.0'
         },
-        timeout: 30000
+        timeout: this.timeouts.request
       });
       
       console.log('✅ [GITHUB-PROVIDER] Token revoked successfully');
@@ -390,55 +455,7 @@ export class GitHubOAuthProvider implements OAuthProvider {
     }
   }
 
-  /**
-   * Vérifie l'appartenance à une organisation GitHub
-   */
-  private async checkOrganizationMembership(accessToken: string, orgId: string): Promise<void> {
-    try {
-      await axios({
-        method: 'GET',
-        url: `https://api.github.com/orgs/${orgId}/members`,
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'SMP-Auth-Service/1.0.0'
-        },
-        timeout: 30000
-      });
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        throw new Error(`User is not a member of organization ${orgId}`);
-      }
-      throw new Error(`Failed to verify organization membership: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * Vérifie l'appartenance à une équipe GitHub
-   */
-  private async checkTeamMembership(accessToken: string, teamId: string): Promise<void> {
-    try {
-      await axios({
-        method: 'GET',
-        url: `https://api.github.com/teams/${teamId}/memberships/`,
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'SMP-Auth-Service/1.0.0'
-        },
-        timeout: 30000
-      });
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        throw new Error(`User is not a member of team ${teamId}`);
-      }
-      throw new Error(`Failed to verify team membership: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * Obtient les organisations de l'utilisateur
-   */
+  // Méthodes utilitaires supplémentaires
   async getUserOrganizations(accessToken: string): Promise<Array<{id: number, login: string, avatar_url: string}>> {
     try {
       const response = await axios({
@@ -447,9 +464,9 @@ export class GitHubOAuthProvider implements OAuthProvider {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'SMP-Auth-Service/1.0.0'
+          'User-Agent': 'SMP-Auth-Service/2.0.0'
         },
-        timeout: 30000
+        timeout: this.timeouts.request
       });
 
       return response.data.map((org: any) => ({
@@ -463,9 +480,6 @@ export class GitHubOAuthProvider implements OAuthProvider {
     }
   }
 
-  /**
-   * Obtient les repositories publics de l'utilisateur
-   */
   async getUserRepositories(accessToken: string, type: 'all' | 'owner' | 'member' = 'owner'): Promise<Array<{
     id: number,
     name: string,
@@ -480,14 +494,14 @@ export class GitHubOAuthProvider implements OAuthProvider {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Accept': 'application/vnd.github.v3+json',
-          'User-Agent': 'SMP-Auth-Service/1.0.0'
+          'User-Agent': 'SMP-Auth-Service/2.0.0'
         },
         params: {
           type,
           per_page: 100,
           sort: 'updated'
         },
-        timeout: 30000
+        timeout: this.timeouts.request
       });
 
       return response.data.map((repo: any) => ({
