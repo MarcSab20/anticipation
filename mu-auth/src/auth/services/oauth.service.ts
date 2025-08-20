@@ -1,4 +1,4 @@
-// mu-auth/src/auth/services/oauth.service.ts - Version corrigée
+// mu-auth/src/auth/services/oauth.service.ts - VERSION CORRIGÉE avec gestion des timeouts
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth.service';
@@ -26,13 +26,21 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
   private isInitialized = false;
   private initializationPromise: Promise<void> | null = null;
 
+  // ✅ CONFIGURATION DES TIMEOUTS
+  private readonly TIMEOUTS = {
+    NETWORK_TIMEOUT: 30000,        // 30 secondes pour les appels réseau
+    RETRY_ATTEMPTS: 3,             // 3 tentatives
+    RETRY_DELAY: 2000,             // 2 secondes entre les tentatives
+    CONNECTION_TIMEOUT: 15000,     // 15 secondes pour établir la connexion
+    OAUTH_STATE_TTL: 600,          // 10 minutes pour l'état OAuth
+  };
+
   constructor(
     private readonly configService: ConfigService,
     private readonly authService: AuthService
   ) {}
 
   async onModuleInit() {
-    // Éviter les initialisations multiples
     if (this.initializationPromise) {
       await this.initializationPromise;
       return;
@@ -44,56 +52,53 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
 
   private async initializeService(): Promise<void> {
     try {
-      this.logger.log('🔄 Initializing OAuth service...');
+      this.logger.log('🔄 Initializing OAuth service with enhanced timeout management...');
       
-      // 🔧 FIX 1: Charger et valider la configuration avec gestion d'erreur
+      // ✅ CORRECTION 1: Configuration avec timeouts
       await this.loadAndValidateConfig();
       
-      // 🔧 FIX 2: Vérifier si au moins un provider est configuré
       const hasEnabledProvider = 
         (this.config.google?.enabled && this.config.google.clientId) ||
         (this.config.github?.enabled && this.config.github.clientId);
 
       if (!hasEnabledProvider) {
         this.logger.warn('⚠️ No OAuth providers are enabled or properly configured');
-        this.logger.warn('🔧 To enable OAuth:');
-        this.logger.warn('   - For Google: Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_OAUTH_ENABLED=true');
-        this.logger.warn('   - For GitHub: Set GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_OAUTH_ENABLED=true');
+        this.logProviderStatus();
         this.isInitialized = false;
         return;
       }
 
-      // 🔧 FIX 3: Initialiser le service OAuth avec retry
-      await this.initializeSmpAuthOAuth();
+      // ✅ CORRECTION 2: Initialisation avec retry et timeout
+      await this.initializeSmpAuthOAuthWithRetry();
 
       const enabledProviders = this.getEnabledProviders();
       this.logger.log(`✅ OAuth service initialized successfully with providers: ${enabledProviders.join(', ')}`);
       
-      // Logger la configuration pour le debugging
       this.logConfigurationStatus();
-      
       this.isInitialized = true;
       
     } catch (error) {
       this.logger.error('❌ Failed to initialize OAuth service:', error);
-      
-      // En cas d'erreur, on continue sans OAuth mais on log l'erreur
       this.logger.warn('⚠️ OAuth service will be disabled due to initialization error');
       this.isInitialized = false;
     }
   }
 
   /**
-   * Charger et valider la configuration OAuth
+   * ✅ CORRECTION 3: Configuration avec URLs corrigées et timeouts
    */
   private async loadAndValidateConfig(): Promise<void> {
     try {
+      // ✅ URLs de redirection corrigées
+      const authAppUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
+      const apiUrl = this.configService.get<string>('API_URL', 'http://localhost:3001');
+      
       this.config = loadOAuthConfig({
         google: {
           clientId: this.configService.get<string>('GOOGLE_CLIENT_ID', ''),
           clientSecret: this.configService.get<string>('GOOGLE_CLIENT_SECRET', ''),
           redirectUri: this.configService.get<string>('GOOGLE_REDIRECT_URI') || 
-            `${this.configService.get<string>('API_URL', 'http://localhost:3001')}/auth/oauth/callback/google`,
+            `${authAppUrl}/oauth/callback`, // ✅ CORRECTION: Frontend URL
           scopes: this.configService.get<string>('GOOGLE_SCOPES', 'openid,email,profile').split(','),
           authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
           tokenUrl: 'https://oauth2.googleapis.com/token',
@@ -107,24 +112,32 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
           clientId: this.configService.get<string>('GITHUB_CLIENT_ID', ''),
           clientSecret: this.configService.get<string>('GITHUB_CLIENT_SECRET', ''),
           redirectUri: this.configService.get<string>('GITHUB_REDIRECT_URI') || 
-            `${this.configService.get<string>('API_URL', 'http://localhost:3001')}/auth/oauth/callback/github`,
+            `${authAppUrl}/oauth/callback`, 
           scopes: this.configService.get<string>('GITHUB_SCOPES', 'user:email,read:user').split(','),
           authUrl: 'https://github.com/login/oauth/authorize',
           tokenUrl: 'https://github.com/login/oauth/access_token',
           userInfoUrl: 'https://api.github.com/user',
           enabled: this.configService.get<boolean>('GITHUB_OAUTH_ENABLED', false),
           allowSignup: this.configService.get<boolean>('GITHUB_ALLOW_SIGNUP', true),
-          organizationId: this.configService.get<string>('GITHUB_ORGANIZATION_ID')
+          organizationId: this.configService.get<string>('GITHUB_ORGANIZATION_ID'),
+          timeout: this.TIMEOUTS.NETWORK_TIMEOUT,
+          retryAttempts: this.TIMEOUTS.RETRY_ATTEMPTS,
+          retryDelay: this.TIMEOUTS.RETRY_DELAY,
         },
         keycloak: {
           brokerCallbackUrl: `${this.configService.get<string>('KEYCLOAK_URL')}/realms/${this.configService.get<string>('KEYCLOAK_REALM')}/broker/{alias}/endpoint`,
           defaultRoles: this.configService.get<string>('OAUTH_DEFAULT_ROLES', 'USER').split(','),
           autoCreateUser: this.configService.get<boolean>('OAUTH_AUTO_CREATE_USER', true),
           syncMode: 'import'
-        }
+        },
+        // network: {
+        //   timeout: this.TIMEOUTS.NETWORK_TIMEOUT,
+        //   retryAttempts: this.TIMEOUTS.RETRY_ATTEMPTS,
+        //   retryDelay: this.TIMEOUTS.RETRY_DELAY,
+        //   connectionTimeout: this.TIMEOUTS.CONNECTION_TIMEOUT,
+        // }
       });
 
-      // Valider la configuration
       const validation = await validateOAuthConfig(this.config);
       
       if (!validation.valid) {
@@ -145,23 +158,26 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Initialiser le service OAuth de smp-auth-ts
+   * ✅ CORRECTION 4: Initialisation avec gestion des timeouts et retry
    */
-  private async initializeSmpAuthOAuth(): Promise<void> {
-    const maxRetries = 3;
+  private async initializeSmpAuthOAuthWithRetry(): Promise<void> {
+    const maxRetries = this.TIMEOUTS.RETRY_ATTEMPTS;
     let retryCount = 0;
 
     while (retryCount < maxRetries) {
       try {
         this.logger.debug(`🔄 Creating OAuth service (attempt ${retryCount + 1}/${maxRetries})`);
 
-        // 🔧 FIX 4: Créer les clients Redis et Keycloak avec configuration séparée
+        // ✅ Configuration avec timeouts
         const redisConfig = {
           host: this.configService.get<string>('REDIS_HOST', 'localhost'),
           port: this.configService.get<number>('REDIS_PORT', 6379),
           password: this.configService.get<string>('REDIS_PASSWORD'),
           db: this.configService.get<number>('REDIS_DB', 0),
-          prefix: this.configService.get<string>('OAUTH_REDIS_PREFIX', 'oauth:')
+          prefix: this.configService.get<string>('OAUTH_REDIS_PREFIX', 'oauth:'),
+          // ✅ AJOUT: Timeouts Redis
+          connectTimeout: this.TIMEOUTS.CONNECTION_TIMEOUT,
+          commandTimeout: this.TIMEOUTS.NETWORK_TIMEOUT,
         };
 
         const keycloakConfig = {
@@ -170,7 +186,9 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
           clientId: this.configService.get<string>('KEYCLOAK_CLIENT_ID', 'mu-client'),
           clientSecret: this.configService.get<string>('KEYCLOAK_CLIENT_SECRET', ''),
           adminClientId: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_ID'),
-          adminClientSecret: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_SECRET')
+          adminClientSecret: this.configService.get<string>('KEYCLOAK_ADMIN_CLIENT_SECRET'),
+          // ✅ AJOUT: Timeouts Keycloak
+          timeout: this.TIMEOUTS.NETWORK_TIMEOUT,
         };
 
         this.logger.debug('🔄 Creating Redis client for OAuth...');
@@ -182,8 +200,8 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
         this.logger.debug('🔄 Creating OAuth service implementation...');
         this.oauthServiceImpl = createOAuthServiceFromEnv(redisClient, keycloakClient);
 
-        // 🔧 FIX 5: Tester la connexion
-        await this.testConnections(redisClient);
+        // ✅ CORRECTION 5: Test de connectivité avec timeout
+        await this.testConnectivityWithTimeout(redisClient);
 
         this.setupEventHandlers();
         
@@ -198,19 +216,29 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
           throw new Error(`Failed to initialize OAuth service after ${maxRetries} attempts: ${error instanceof Error ? error.message : String(error)}`);
         }
         
-        // Attendre avant le prochain essai
-        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        // Attendre avant le prochain essai avec backoff exponentiel
+        const delay = this.TIMEOUTS.RETRY_DELAY * Math.pow(2, retryCount - 1);
+        this.logger.debug(`⏳ Waiting ${delay}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
   }
 
   /**
-   * 🔧 FIX 6: Tester les connexions avant de finaliser l'initialisation
+   * ✅ CORRECTION 6: Test de connectivité avec timeout
    */
-  private async testConnections(redisClient: any): Promise<void> {
+  private async testConnectivityWithTimeout(redisClient: any): Promise<void> {
     try {
-      this.logger.debug('🧪 Testing Redis connection...');
-      await redisClient.ping();
+      this.logger.debug('🧪 Testing Redis connection with timeout...');
+      
+      const connectivityTest = Promise.race([
+        redisClient.ping(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Redis connectivity test timeout')), this.TIMEOUTS.CONNECTION_TIMEOUT)
+        )
+      ]);
+      
+      await connectivityTest;
       this.logger.debug('✅ Redis connection test passed');
     } catch (error) {
       this.logger.warn('⚠️ Redis connection test failed, but continuing...', error);
@@ -219,64 +247,8 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Configurer les gestionnaires d'événements
+   * ✅ CORRECTION 7: Méthodes publiques avec gestion des timeouts
    */
-  private setupEventHandlers(): void {
-    if (!this.oauthServiceImpl) return;
-
-    try {
-      this.oauthServiceImpl.addEventListener('oauth_authorization_completed', async (event) => {
-        this.logger.log(`🎉 OAuth authorization completed: ${event.provider} - ${event.email}`);
-      });
-
-      this.oauthServiceImpl.addEventListener('oauth_authorization_failed', async (event) => {
-        this.logger.error(`❌ OAuth authorization failed: ${event.provider} - ${event.error}`);
-      });
-
-      this.oauthServiceImpl.addEventListener('oauth_account_linked', async (event) => {
-        this.logger.log(`🔗 OAuth account linked: ${event.provider} for user ${event.userId}`);
-      });
-
-      this.oauthServiceImpl.addEventListener('oauth_account_unlinked', async (event) => {
-        this.logger.log(`🔗 OAuth account unlinked: ${event.provider} for user ${event.userId}`);
-      });
-
-      this.logger.debug('✅ OAuth event handlers configured');
-    } catch (error) {
-      this.logger.warn('⚠️ Failed to setup OAuth event handlers:', error);
-    }
-  }
-
-  /**
-   * Logger le statut de la configuration
-   */
-  private logConfigurationStatus(): void {
-    this.logger.log('🔍 =================================');
-    this.logger.log('🔍 OAUTH CONFIGURATION STATUS');
-    this.logger.log('🔍 =================================');
-    
-    const providers = ['google', 'github'];
-    
-    for (const provider of providers) {
-      const config = this.config[provider as keyof OAuthConfig] as any;
-      const enabled = config?.enabled || false;
-      const configured = !!(config?.clientId && config?.clientSecret);
-      const status = enabled && configured ? '✅' : enabled ? '🔶' : '❌';
-      
-      this.logger.log(`🔍 ${provider.toUpperCase()}: ${status} ${enabled ? 'ENABLED' : 'DISABLED'} ${configured ? 'CONFIGURED' : 'NOT CONFIGURED'}`);
-      
-      if (enabled && !configured) {
-        this.logger.warn(`⚠️ ${provider.toUpperCase()}: Enabled but missing credentials`);
-      }
-    }
-    
-    this.logger.log('🔍 =================================');
-  }
-
-  // ============================================================================
-  // 🔧 FIX 7: MÉTHODES PUBLIQUES avec vérification d'initialisation
-  // ============================================================================
-
   private ensureInitialized(): void {
     if (!this.isInitialized || !this.oauthServiceImpl) {
       throw new Error('OAuth service not initialized or no providers configured');
@@ -285,38 +257,164 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
 
   async getAuthorizationUrl(request: OAuthAuthorizationRequest): Promise<OAuthAuthorizationResponse> {
     this.ensureInitialized();
-    return this.oauthServiceImpl!.getAuthorizationUrl(request);
+    
+    try {
+      // ✅ AJOUT: Timeout pour la génération d'URL
+      const urlGeneration = Promise.race([
+        this.oauthServiceImpl!.getAuthorizationUrl(request),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('OAuth URL generation timeout')), 10000)
+        )
+      ]);
+      
+      const result = await urlGeneration;
+      
+      this.logger.log(`✅ OAuth URL generated for ${request.provider}: ${result.authUrl.substring(0, 100)}...`);
+      return result;
+      
+    } catch (error) {
+      this.logger.error(`❌ OAuth URL generation failed for ${request.provider}:`, error);
+      throw new Error(`Failed to generate OAuth URL: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async handleCallback(request: OAuthCallbackRequest): Promise<OAuthCallbackResponse> {
     this.ensureInitialized();
-    return this.oauthServiceImpl!.handleCallback(request);
+    
+    try {
+      this.logger.log(`🔄 Processing OAuth callback for ${request.provider} with code: ${request.code?.substring(0, 10)}...`);
+      
+      // ✅ AJOUT: Timeout pour le callback avec retry
+      const callbackResult = await this.executeWithRetry(
+        () => this.oauthServiceImpl!.handleCallback(request),
+        `OAuth callback for ${request.provider}`
+      );
+      
+      if (callbackResult.success) {
+        this.logger.log(`✅ OAuth callback successful for ${request.provider}`);
+      } else {
+        this.logger.error(`❌ OAuth callback failed for ${request.provider}: ${callbackResult.error}`);
+      }
+      
+      return callbackResult;
+      
+    } catch (error) {
+      this.logger.error(`❌ OAuth callback processing failed for ${request.provider}:`, error);
+      
+      return {
+        success: false,
+        error: this.getErrorMessage(error),
+        message: `OAuth authentication failed for ${request.provider}`
+      };
+    }
   }
 
+  /**
+   * ✅ CORRECTION 8: Exécution avec retry et timeout
+   */
+  private async executeWithRetry<T>(
+    operation: () => Promise<T>,
+    operationName: string,
+    timeoutMs: number = this.TIMEOUTS.NETWORK_TIMEOUT
+  ): Promise<T> {
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= this.TIMEOUTS.RETRY_ATTEMPTS; attempt++) {
+      try {
+        this.logger.debug(`🔄 ${operationName} (attempt ${attempt}/${this.TIMEOUTS.RETRY_ATTEMPTS})`);
+        
+        const operationWithTimeout = Promise.race([
+          operation(),
+          new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error(`${operationName} timeout after ${timeoutMs}ms`)), timeoutMs)
+          )
+        ]);
+        
+        const result = await operationWithTimeout;
+        
+        if (attempt > 1) {
+          this.logger.log(`✅ ${operationName} succeeded on attempt ${attempt}`);
+        }
+        
+        return result;
+        
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        this.logger.warn(`⚠️ ${operationName} failed on attempt ${attempt}: ${lastError.message}`);
+        
+        if (attempt < this.TIMEOUTS.RETRY_ATTEMPTS) {
+          const delay = this.TIMEOUTS.RETRY_DELAY * attempt;
+          this.logger.debug(`⏳ Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    
+    throw lastError || new Error(`${operationName} failed after ${this.TIMEOUTS.RETRY_ATTEMPTS} attempts`);
+  }
+
+  /**
+   * ✅ Autres méthodes avec gestion des timeouts
+   */
   async linkAccount(userId: string, provider: string, providerUserId: string): Promise<boolean> {
     this.ensureInitialized();
-    return this.oauthServiceImpl!.linkAccount(userId, provider, providerUserId);
+    
+    try {
+      return await this.executeWithRetry(
+        () => this.oauthServiceImpl!.linkAccount(userId, provider, providerUserId),
+        `Link account ${provider} for user ${userId}`
+      );
+    } catch (error) {
+      this.logger.error(`❌ Failed to link ${provider} account for user ${userId}:`, error);
+      return false;
+    }
   }
 
   async unlinkAccount(userId: string, provider: string): Promise<boolean> {
     this.ensureInitialized();
-    return this.oauthServiceImpl!.unlinkAccount(userId, provider);
+    
+    try {
+      return await this.executeWithRetry(
+        () => this.oauthServiceImpl!.unlinkAccount(userId, provider),
+        `Unlink account ${provider} for user ${userId}`
+      );
+    } catch (error) {
+      this.logger.error(`❌ Failed to unlink ${provider} account for user ${userId}:`, error);
+      return false;
+    }
   }
 
   async getLinkedAccounts(userId: string): Promise<LinkedAccount[]> {
     this.ensureInitialized();
-    return this.oauthServiceImpl!.getLinkedAccounts(userId);
+    
+    try {
+      return await this.executeWithRetry(
+        () => this.oauthServiceImpl!.getLinkedAccounts(userId),
+        `Get linked accounts for user ${userId}`,
+        5000 // Timeout plus court pour les lectures
+      );
+    } catch (error) {
+      this.logger.error(`❌ Failed to get linked accounts for user ${userId}:`, error);
+      return [];
+    }
   }
 
   async refreshProviderToken(userId: string, provider: string): Promise<OAuthTokenResponse | null> {
     this.ensureInitialized();
-    return this.oauthServiceImpl!.refreshProviderToken(userId, provider);
+    
+    try {
+      return await this.executeWithRetry(
+        () => this.oauthServiceImpl!.refreshProviderToken(userId, provider),
+        `Refresh ${provider} token for user ${userId}`
+      );
+    } catch (error) {
+      this.logger.error(`❌ Failed to refresh ${provider} token for user ${userId}:`, error);
+      return null;
+    }
   }
 
-  // ============================================================================
-  // MÉTHODES UTILITAIRES
-  // ============================================================================
-
+  // ✅ Méthodes utilitaires
   getEnabledProviders(): string[] {
     if (!this.isInitialized || !this.oauthServiceImpl) {
       return [];
@@ -339,220 +437,84 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Vérifier la santé du service OAuth
+   * ✅ Logging amélioré
    */
-  async checkHealth(): Promise<{
-    healthy: boolean;
-    initialized: boolean;
-    activeProviders: number;
-    availableProviders: string[];
-    issues: string[];
-    lastChecked: string;
-  }> {
-    const issues: string[] = [];
-    const availableProviders = this.getEnabledProviders();
-    
-    if (!this.isInitialized) {
-      issues.push('OAuth service not initialized');
-    }
-    
-    if (!this.oauthServiceImpl) {
-      issues.push('OAuth service implementation not available');
-    }
-    
-    if (availableProviders.length === 0) {
-      issues.push('No OAuth providers are enabled');
-    }
-
-    // Tester la connectivité si le service est initialisé
-    if (this.isInitialized && this.oauthServiceImpl) {
-      try {
-        // Tester chaque provider configuré
-        for (const provider of availableProviders) {
-          const config = await this.getProviderConfig(provider);
-          if (!config?.clientId || !config?.clientSecret) {
-            issues.push(`Provider ${provider} is missing required configuration`);
-          }
-        }
-      } catch (error) {
-        issues.push(`Configuration check failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
-
-    return {
-      healthy: issues.length === 0 && this.isInitialized,
-      initialized: this.isInitialized,
-      activeProviders: availableProviders.length,
-      availableProviders,
-      issues,
-      lastChecked: new Date().toISOString()
-    };
+  private logProviderStatus(): void {
+    this.logger.warn('🔧 To enable OAuth:');
+    this.logger.warn('   - For Google: Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_OAUTH_ENABLED=true');
+    this.logger.warn('   - For GitHub: Set GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_OAUTH_ENABLED=true');
+    this.logger.warn('   - Ensure redirect URIs point to frontend: http://localhost:3000/oauth/callback');
   }
 
-  /**
-   * Générer les URLs d'authentification pour tous les providers
-   */
-  getAuthenticationUrls(): Record<string, string> {
-    const baseUrl = this.configService.get<string>('API_URL', 'http://localhost:3001');
-    const enabledProviders = this.getEnabledProviders();
+  private logConfigurationStatus(): void {
+    this.logger.log('🔍 =================================');
+    this.logger.log('🔍 OAUTH CONFIGURATION STATUS');
+    this.logger.log('🔍 =================================');
     
-    const urls: Record<string, string> = {};
-    
-    for (const provider of enabledProviders) {
-      urls[provider] = `${baseUrl}/auth/oauth/authorize?provider=${provider}`;
-    }
-    
-    return urls;
-  }
-
-  /**
-   * Obtenir la configuration publique (sans secrets)
-   */
-  getPublicConfig(): Record<string, any> {
-    if (!this.config) {
-      return {};
-    }
-
-    const publicConfig: Record<string, any> = {};
-    
-    if (this.config.google?.enabled) {
-      publicConfig.google = {
-        enabled: true,
-        scopes: this.config.google.scopes,
-        hostedDomain: this.config.google.hostedDomain,
-        displayName: 'Google',
-        iconUrl: 'https://developers.google.com/identity/images/g-logo.png'
-      };
-    }
-    
-    if (this.config.github?.enabled) {
-      publicConfig.github = {
-        enabled: true,
-        scopes: this.config.github.scopes,
-        allowSignup: this.config.github.allowSignup,
-        displayName: 'GitHub',
-        iconUrl: 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png'
-      };
-    }
-    
-    return publicConfig;
-  }
-
-  /**
-   * Tester un provider OAuth (pour debugging)
-   */
-  async testProvider(provider: string): Promise<{
-    success: boolean;
-    authUrl?: string;
-    error?: string;
-    steps: string[];
-  }> {
-    const steps: string[] = [];
-    
-    try {
-      steps.push(`Checking if OAuth service is initialized`);
-      
-      if (!this.isInitialized) {
-        throw new Error('OAuth service not initialized');
-      }
-
-      steps.push(`Checking if provider ${provider} is enabled`);
-      
-      if (!this.isProviderEnabled(provider)) {
-        throw new Error(`Provider ${provider} is not enabled or configured`);
-      }
-      
-      steps.push(`Provider ${provider} is enabled`);
-      
-      steps.push('Generating test authorization URL');
-      const result = await this.getAuthorizationUrl({
-        provider: provider as 'google' | 'github',
-        redirectUri: `${this.configService.get<string>('API_URL')}/auth/oauth/callback/${provider}`,
-        scopes: undefined // Utiliser les scopes par défaut
-      });
-      
-      steps.push('Authorization URL generated successfully');
-      
-      return {
-        success: true,
-        authUrl: result.authUrl,
-        steps
-      };
-      
-    } catch (error) {
-      steps.push(`Error: ${error instanceof Error ? error.message : String(error)}`);
-      
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-        steps
-      };
-    }
-  }
-
-  /**
-   * 🔧 FIX 8: Méthode pour réinitialiser le service OAuth
-   */
-  async reinitialize(): Promise<void> {
-    this.logger.log('🔄 Reinitializing OAuth service...');
-    
-    try {
-      // Nettoyer l'état actuel
-      if (this.oauthServiceImpl) {
-        await this.oauthServiceImpl.close().catch(error => {
-          this.logger.warn('⚠️ Error closing previous OAuth service:', error);
-        });
-        this.oauthServiceImpl = null;
-      }
-      
-      this.isInitialized = false;
-      this.initializationPromise = null;
-      
-      // Réinitialiser
-      await this.onModuleInit();
-      
-      this.logger.log('✅ OAuth service reinitialized successfully');
-      
-    } catch (error) {
-      this.logger.error('❌ Failed to reinitialize OAuth service:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Obtenir des statistiques du service OAuth
-   */
-  getStatistics(): {
-    initialized: boolean;
-    enabledProviders: number;
-    totalProviders: number;
-    configurationStatus: Record<string, { enabled: boolean; configured: boolean }>;
-  } {
     const providers = ['google', 'github'];
-    const configurationStatus: Record<string, { enabled: boolean; configured: boolean }> = {};
     
     for (const provider of providers) {
-      const config = this.config?.[provider as keyof OAuthConfig] as any;
-      configurationStatus[provider] = {
-        enabled: config?.enabled || false,
-        configured: !!(config?.clientId && config?.clientSecret)
-      };
+      const config = this.config[provider as keyof OAuthConfig] as any;
+      const enabled = config?.enabled || false;
+      const configured = !!(config?.clientId && config?.clientSecret);
+      const status = enabled && configured ? '✅' : enabled ? '🔶' : '❌';
+      const redirectUri = config?.redirectUri || 'NOT SET';
+      
+      this.logger.log(`🔍 ${provider.toUpperCase()}: ${status} ${enabled ? 'ENABLED' : 'DISABLED'} ${configured ? 'CONFIGURED' : 'NOT CONFIGURED'}`);
+      this.logger.log(`🔍   Redirect URI: ${redirectUri}`);
+      
+      if (enabled && !configured) {
+        this.logger.warn(`⚠️ ${provider.toUpperCase()}: Enabled but missing credentials`);
+      }
     }
     
-    const enabledProviders = Object.values(configurationStatus)
-      .filter(status => status.enabled && status.configured).length;
-
-    return {
-      initialized: this.isInitialized,
-      enabledProviders,
-      totalProviders: providers.length,
-      configurationStatus
-    };
+    this.logger.log('🔍 =================================');
   }
 
-  // ============================================================================
-  // LIFECYCLE HOOKS
-  // ============================================================================
+  private getErrorMessage(error: any): string {
+    if (error instanceof Error) {
+      const message = error.message.toLowerCase();
+      
+      // ✅ Messages d'erreur spécifiques aux timeouts
+      if (message.includes('timeout') || message.includes('etimedout')) {
+        return 'Connection timeout. Please check your network connection and try again.';
+      }
+      
+      if (message.includes('network') || message.includes('econnreset') || message.includes('enotfound')) {
+        return 'Network connection error. Please check your internet connection.';
+      }
+      
+      if (message.includes('access_denied')) {
+        return 'Access denied. Please authorize the application to continue.';
+      }
+      
+      if (message.includes('invalid_grant') || message.includes('expired')) {
+        return 'OAuth session expired. Please try again.';
+      }
+      
+      return process.env.NODE_ENV === 'development' ? error.message : 'OAuth authentication failed';
+    }
+    
+    return 'Unknown OAuth error occurred';
+  }
+
+  private setupEventHandlers(): void {
+    if (!this.oauthServiceImpl) return;
+
+    try {
+      this.oauthServiceImpl.addEventListener('oauth_authorization_completed', async (event) => {
+        this.logger.log(`🎉 OAuth authorization completed: ${event.provider} - ${event.email}`);
+      });
+
+      this.oauthServiceImpl.addEventListener('oauth_authorization_failed', async (event) => {
+        this.logger.error(`❌ OAuth authorization failed: ${event.provider} - ${event.error}`);
+      });
+
+      this.logger.debug('✅ OAuth event handlers configured');
+    } catch (error) {
+      this.logger.warn('⚠️ Failed to setup OAuth event handlers:', error);
+    }
+  }
 
   async onModuleDestroy(): Promise<void> {
     this.logger.log('🔄 Destroying OAuth service...');

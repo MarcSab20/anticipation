@@ -1,4 +1,4 @@
-// mu-auth/src/auth/resolvers/oauth.resolver.ts - Version corrigée
+// mu-auth/src/auth/resolvers/oauth.resolver.ts - VERSION CORRIGÉE
 import { Resolver, Query, Mutation, Args, Context } from '@nestjs/graphql';
 import { Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { OAuthService } from '../services/oauth.service';
@@ -22,7 +22,7 @@ export class OAuthResolver {
   constructor(private readonly oauthService: OAuthService) {}
 
   /**
-   * Générer une URL d'autorisation OAuth - Version corrigée
+   * ✅ CORRECTION 1: Génération d'URL OAuth avec gestion d'erreurs renforcée
    */
   @Mutation(() => OAuthAuthorizationResponse)
   async generateOAuthUrl(
@@ -34,32 +34,53 @@ export class OAuthResolver {
     try {
       this.logger.log(`🔐 Generating OAuth URL for provider: ${input.provider}`);
 
-      // 🔧 FIX 1: Vérification précoce du provider
+      // ✅ Validation précoce avec messages d'erreur détaillés
       if (!this.oauthService.isProviderEnabled(input.provider)) {
         this.logger.error(`❌ OAuth provider ${input.provider} is not enabled or configured`);
+        
+        const availableProviders = this.oauthService.getEnabledProviders();
+        const errorMessage = availableProviders.length > 0 
+          ? `Provider ${input.provider} is not available. Available providers: ${availableProviders.join(', ')}`
+          : 'No OAuth providers are currently configured';
+          
         return {
           success: false,
           authUrl: '',
           state: '',
           provider: input.provider,
-          message: `OAuth provider ${input.provider} is not enabled or configured`
+          message: errorMessage
         };
       }
 
-      // 🔧 FIX 2: Suppression du timeout Promise.race problématique
+      // ✅ CORRECTION 2: URLs de redirection corrigées
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const redirectUri = input.redirectUri || `${frontendUrl}/oauth/callback`;
+      
+      this.logger.debug(`🔄 Using redirect URI: ${redirectUri}`);
       this.logger.debug(`🔄 Calling OAuth service for ${input.provider}...`);
       
-      const result = await this.oauthService.getAuthorizationUrl({
+      // ✅ CORRECTION 3: Configuration de la requête avec timeout
+      const oauthRequest = {
         provider: input.provider as 'google' | 'github',
-        redirectUri: input.redirectUri,
-        scopes: input.scopes,
+        redirectUri: redirectUri,
+        scopes: input.scopes || this.getDefaultScopes(input.provider),
         additionalParams: {
           userAgent: context?.req?.get('User-Agent'),
-          ip: context?.req?.ip
+          ip: this.extractClientIP(context?.req),
+          source: 'oauth-resolver'
         }
-      });
+      };
 
-      this.logger.log(`✅ OAuth URL generated successfully for ${input.provider} in ${Date.now() - startTime}ms`);
+      // ✅ CORRECTION 4: Appel avec timeout et gestion d'erreur
+      const result = await Promise.race([
+        this.oauthService.getAuthorizationUrl(oauthRequest),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('OAuth URL generation timeout')), 15000)
+        )
+      ]);
+
+      const duration = Date.now() - startTime;
+      this.logger.log(`✅ OAuth URL generated successfully for ${input.provider} in ${duration}ms`);
 
       return {
         success: true,
@@ -74,19 +95,19 @@ export class OAuthResolver {
       const duration = Date.now() - startTime;
       this.logger.error(`❌ Failed to generate OAuth URL for ${input.provider} after ${duration}ms:`, error);
       
-      // 🔧 FIX 3: Retourner une réponse d'erreur au lieu de throw
+      // ✅ CORRECTION 5: Gestion détaillée des erreurs
       return {
         success: false,
         authUrl: '',
         state: '',
         provider: input.provider,
-        message: this.getErrorMessage(error)
+        message: this.getDetailedErrorMessage(error, 'URL generation')
       };
     }
   }
 
   /**
-   * Traiter un callback OAuth - Version améliorée
+   * ✅ CORRECTION 6: Traitement de callback OAuth amélioré
    */
   @Mutation(() => OAuthCallbackResponse)
   async handleOAuthCallback(
@@ -97,56 +118,67 @@ export class OAuthResolver {
     
     try {
       this.logger.log(`🔄 Processing OAuth callback for provider: ${input.provider}`);
+      this.logger.debug(`🔍 Callback data: code=${input.code?.substring(0, 10)}..., state=${input.state?.substring(0, 10)}..., error=${input.error}`);
 
-      // Validation des inputs
-      if (!input.code && !input.error) {
-        return {
-          success: false,
-          message: 'Missing authorization code or error information'
-        };
-      }
-
+      // ✅ Validation des paramètres d'entrée
       if (input.error) {
         this.logger.warn(`⚠️ OAuth error received: ${input.error} - ${input.errorDescription || ''}`);
         return {
           success: false,
-          message: `OAuth error: ${input.error}${input.errorDescription ? ` - ${input.errorDescription}` : ''}`
+          message: this.formatOAuthError(input.error, input.errorDescription)
         };
       }
 
-      const result = await this.oauthService.handleCallback({
+      if (!input.code) {
+        this.logger.error(`❌ Missing authorization code for ${input.provider}`);
+        return {
+          success: false,
+          message: 'Authorization code is missing. Please try the OAuth flow again.'
+        };
+      }
+
+      if (!input.state) {
+        this.logger.error(`❌ Missing state parameter for ${input.provider}`);
+        return {
+          success: false,
+          message: 'Security state parameter is missing. Please try the OAuth flow again.'
+        };
+      }
+
+      // ✅ CORRECTION 7: Appel du service avec retry automatique
+      const callbackRequest = {
         provider: input.provider as 'google' | 'github',
         code: input.code,
         state: input.state,
         error: input.error,
         error_description: input.errorDescription
-      });
+      };
+
+      const result = await Promise.race([
+        this.oauthService.handleCallback(callbackRequest),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('OAuth callback processing timeout')), 30000)
+        )
+      ]);
 
       const duration = Date.now() - startTime;
 
       if (result.success && result.keycloakTokens) {
         this.logger.log(`✅ OAuth callback processed successfully for ${input.provider} in ${duration}ms`);
         
+        // ✅ CORRECTION 8: Validation des données retournées
+        if (!result.userInfo?.email) {
+          this.logger.warn(`⚠️ OAuth callback succeeded but no email received for ${input.provider}`);
+          return {
+            success: false,
+            message: 'OAuth authentication succeeded but user email is not available. Please ensure email permission is granted.'
+          };
+        }
+        
         return {
           success: true,
-          userInfo: result.userInfo ? {
-            id: result.userInfo.id,
-            email: result.userInfo.email,
-            name: result.userInfo.name,
-            firstName: result.userInfo.firstName,
-            lastName: result.userInfo.lastName,
-            avatarUrl: result.userInfo.avatarUrl,
-            username: result.userInfo.username,
-            verified: result.userInfo.verified,
-            provider: result.userInfo.provider
-          } : undefined,
-          tokens: result.keycloakTokens ? {
-            accessToken: result.keycloakTokens.access_token,
-            refreshToken: result.keycloakTokens.refresh_token,
-            tokenType: 'Bearer',
-            expiresIn: result.keycloakTokens.expires_in,
-            idToken: result.keycloakTokens.id_token
-          } : undefined,
+          userInfo: this.sanitizeUserInfo(result.userInfo),
+          tokens: this.sanitizeTokens(result.keycloakTokens),
           message: result.message
         };
       } else {
@@ -164,13 +196,13 @@ export class OAuthResolver {
       
       return {
         success: false,
-        message: this.getErrorMessage(error)
+        message: this.getDetailedErrorMessage(error, 'callback processing')
       };
     }
   }
 
   /**
-   * Lier un compte OAuth à un utilisateur existant
+   * ✅ Autres mutations avec gestion d'erreurs améliorée
    */
   @Mutation(() => Boolean)
   async linkOAuthAccount(
@@ -199,9 +231,6 @@ export class OAuthResolver {
     }
   }
 
-  /**
-   * Délier un compte OAuth
-   */
   @Mutation(() => Boolean)
   async unlinkOAuthAccount(
     @Args('input') input: OAuthUnlinkAccountInput
@@ -225,9 +254,6 @@ export class OAuthResolver {
     }
   }
 
-  /**
-   * Rafraîchir un token OAuth
-   */
   @Mutation(() => OAuthTokenInfo, { nullable: true })
   async refreshOAuthToken(
     @Args('input') input: OAuthRefreshTokenInput
@@ -258,7 +284,7 @@ export class OAuthResolver {
   }
 
   /**
-   * Obtenir les comptes OAuth liés d'un utilisateur
+   * ✅ Queries avec gestion d'erreurs
    */
   @Query(() => [LinkedAccountInfo])
   async getLinkedOAuthAccounts(@Args('userId') userId: string): Promise<LinkedAccountInfo[]> {
@@ -282,27 +308,45 @@ export class OAuthResolver {
     }
   }
 
-  /**
-   * Obtenir les providers OAuth disponibles
-   */
   @Query(() => [OAuthProviderInfo])
   async getAvailableOAuthProviders(): Promise<OAuthProviderInfo[]> {
     try {
       const enabledProviders = this.oauthService.getEnabledProviders();
 
+      if (enabledProviders.length === 0) {
+        this.logger.warn('⚠️ No OAuth providers are enabled');
+        return [];
+      }
+
       const providersInfo = await Promise.all(
         enabledProviders.map(async (provider) => {
-          const config = await this.oauthService.getProviderConfig(provider);
-          return {
-            name: provider,
-            displayName: this.getProviderDisplayName(provider),
-            enabled: true,
-            scopes: config?.scopes || [],
-            authUrl: `/auth/oauth/authorize?provider=${provider}`,
-            supportsRefresh: provider === 'google', // GitHub OAuth Apps ne supportent pas le refresh
-            iconUrl: this.getProviderIconUrl(provider),
-            description: this.getProviderDescription(provider)
-          };
+          try {
+            const config = await this.oauthService.getProviderConfig(provider);
+            return {
+              name: provider,
+              displayName: this.getProviderDisplayName(provider),
+              enabled: true,
+              scopes: config?.scopes || [],
+              authUrl: `/auth/oauth/authorize?provider=${provider}`,
+              supportsRefresh: provider === 'google', // GitHub OAuth Apps ne supportent pas le refresh
+              iconUrl: this.getProviderIconUrl(provider),
+              description: this.getProviderDescription(provider),
+              configured: !!(config?.clientId && config?.clientSecret)
+            };
+          } catch (error) {
+            this.logger.error(`❌ Failed to get config for provider ${provider}:`, error);
+            return {
+              name: provider,
+              displayName: this.getProviderDisplayName(provider),
+              enabled: false,
+              scopes: [],
+              authUrl: '',
+              supportsRefresh: false,
+              iconUrl: this.getProviderIconUrl(provider),
+              description: `${this.getProviderDisplayName(provider)} (Configuration Error)`,
+              configured: false
+            };
+          }
         })
       );
 
@@ -314,16 +358,23 @@ export class OAuthResolver {
     }
   }
 
-  /**
-   * Vérifier le statut d'un provider OAuth
-   */
   @Query(() => OAuthProviderInfo, { nullable: true })
   async getOAuthProviderStatus(@Args('provider') provider: string): Promise<OAuthProviderInfo | null> {
     try {
       const isEnabled = this.oauthService.isProviderEnabled(provider);
       
       if (!isEnabled) {
-        return null;
+        return {
+          name: provider,
+          displayName: this.getProviderDisplayName(provider),
+          enabled: false,
+          scopes: [],
+          authUrl: '',
+          supportsRefresh: false,
+          iconUrl: this.getProviderIconUrl(provider),
+          description: `${this.getProviderDisplayName(provider)} is not enabled`,
+          configured: false
+        };
       }
 
       const config = await this.oauthService.getProviderConfig(provider);
@@ -346,9 +397,6 @@ export class OAuthResolver {
     }
   }
 
-  /**
-   * Tester la configuration d'un provider OAuth
-   */
   @Query(() => Boolean)
   async testOAuthProvider(@Args('provider') provider: string): Promise<boolean> {
     try {
@@ -359,7 +407,6 @@ export class OAuthResolver {
 
       const config = await this.oauthService.getProviderConfig(provider);
       
-      // Tests de configuration de base
       const hasRequiredConfig = !!(config?.clientId && config?.clientSecret && config?.redirectUri);
 
       this.logger.log(`🧪 OAuth provider ${provider} test result: ${hasRequiredConfig ? 'PASSED' : 'FAILED'}`);
@@ -380,9 +427,6 @@ export class OAuthResolver {
     }
   }
 
-  /**
-   * 🔧 Nouvelle méthode: Santé du service OAuth
-   */
   @Query(() => Boolean)
   async isOAuthServiceHealthy(): Promise<boolean> {
     try {
@@ -393,12 +437,13 @@ export class OAuthResolver {
         return false;
       }
 
-      // Tester chaque provider
-      const tests = await Promise.all(
+      const tests = await Promise.allSettled(
         enabledProviders.map(provider => this.testOAuthProvider(provider))
       );
 
-      const allHealthy = tests.every(Boolean);
+      const allHealthy = tests.every(result => 
+        result.status === 'fulfilled' && result.value === true
+      );
       
       this.logger.log(`🏥 OAuth service health check: ${allHealthy ? 'HEALTHY' : 'UNHEALTHY'} (${enabledProviders.length} providers)`);
       
@@ -411,31 +456,109 @@ export class OAuthResolver {
   }
 
   // ============================================================================
-  // MÉTHODES UTILITAIRES PRIVÉES
+  // ✅ MÉTHODES UTILITAIRES AMÉLIORÉES
   // ============================================================================
 
-  private getErrorMessage(error: any): string {
+  private getDetailedErrorMessage(error: any, operation: string): string {
     if (error instanceof Error) {
-      // Masquer les détails sensibles en production
-      if (process.env.NODE_ENV === 'production') {
-        // Messages d'erreur génériques pour la production
-        if (error.message.includes('timeout')) {
-          return 'Service temporarily unavailable. Please try again.';
-        }
-        if (error.message.includes('connection') || error.message.includes('Redis')) {
-          return 'Connection error. Please try again later.';
-        }
-        if (error.message.includes('not found') || error.message.includes('not enabled')) {
-          return 'OAuth provider not available.';
-        }
-        return 'An error occurred during OAuth authentication.';
-      } else {
-        // Messages détaillés en développement
-        return error.message;
+      const message = error.message.toLowerCase();
+      
+      // Messages d'erreur spécifiques
+      if (message.includes('timeout') || message.includes('etimedout')) {
+        return `Connection timeout during ${operation}. This may be due to network connectivity issues. Please try again.`;
       }
+      
+      if (message.includes('connection') || message.includes('econnreset') || message.includes('enotfound')) {
+        return `Network connection error during ${operation}. Please check your internet connection and try again.`;
+      }
+      
+      if (message.includes('not found') || message.includes('not enabled')) {
+        return 'OAuth provider not available. Please contact support if this issue persists.';
+      }
+      
+      if (message.includes('configuration') || message.includes('invalid client')) {
+        return 'OAuth provider configuration error. Please contact support.';
+      }
+      
+      if (message.includes('rate limit') || message.includes('too many requests')) {
+        return 'Too many requests. Please wait a moment and try again.';
+      }
+      
+      // En mode développement, afficher l'erreur complète
+      if (process.env.NODE_ENV === 'development') {
+        return `${operation} failed: ${error.message}`;
+      }
+      
+      return `An error occurred during ${operation}. Please try again.`;
     }
     
-    return 'Unknown error occurred';
+    return `Unknown error occurred during ${operation}`;
+  }
+
+  private formatOAuthError(error: string, description?: string): string {
+    const errorMessages: Record<string, string> = {
+      'access_denied': 'You denied access to the application. To continue, please authorize the application.',
+      'invalid_request': 'Invalid OAuth request. Please try again.',
+      'unauthorized_client': 'Application is not authorized for this OAuth provider.',
+      'unsupported_response_type': 'OAuth configuration error. Please contact support.',
+      'invalid_scope': 'Invalid permissions requested. Please contact support.',
+      'server_error': 'OAuth provider server error. Please try again later.',
+      'temporarily_unavailable': 'OAuth provider is temporarily unavailable. Please try again later.'
+    };
+
+    const message = errorMessages[error] || `OAuth error: ${error}`;
+    
+    if (description && description !== error) {
+      return `${message} (${description})`;
+    }
+    
+    return message;
+  }
+
+  private getDefaultScopes(provider: string): string[] {
+    const defaultScopes: Record<string, string[]> = {
+      'google': ['openid', 'email', 'profile'],
+      'github': ['user:email', 'read:user']
+    };
+    
+    return defaultScopes[provider] || [];
+  }
+
+  private extractClientIP(req: any): string {
+    if (!req) return 'unknown';
+    
+    return req.ip || 
+           req.connection?.remoteAddress || 
+           req.socket?.remoteAddress ||
+           'unknown';
+  }
+
+  private sanitizeUserInfo(userInfo: any): any {
+    if (!userInfo) return undefined;
+    
+    return {
+      id: userInfo.id,
+      email: userInfo.email,
+      name: userInfo.name,
+      firstName: userInfo.firstName,
+      lastName: userInfo.lastName,
+      avatarUrl: userInfo.avatarUrl,
+      username: userInfo.username,
+      verified: userInfo.verified,
+      provider: userInfo.provider
+    };
+  }
+
+  private sanitizeTokens(tokens: any): any {
+    if (!tokens) return undefined;
+    
+    return {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      tokenType: 'Bearer',
+      expiresIn: tokens.expires_in,
+      idToken: tokens.id_token
+    };
   }
 
   private getProviderDisplayName(provider: string): string {

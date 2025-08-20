@@ -19,6 +19,9 @@ export interface GitHubOAuthConfig extends OAuthProviderConfig {
   allowSignup?: boolean;
   teamId?: string; 
   organizationId?: string; 
+  timeout?: number
+  retryAttempts?: number;
+  retryDelay?: number;
 }
 
 export interface OAuthConfig {
