@@ -686,30 +686,20 @@ async trustDevice(@Args('input') input: DeviceTrustWithUserInputDto): Promise<De
   }
 
   @Mutation(() => MagicLinkVerificationResultDto)
-  async verifyMagicLink(@Args('token') token: string): Promise<MagicLinkVerificationResultDto> {
-    try {
-      const result = await this.authService.verifyMagicLink(token);
-
-      return {
-        success: result.success,
-        status: result.status,
-        message: result.message,
-        accessToken: result.authResponse?.access_token,
-        refreshToken: result.authResponse?.refresh_token,
-        tokenType: result.authResponse?.token_type,
-        expiresIn: result.authResponse?.expires_in,
-        requiresMFA: result.requiresMFA,
-        mfaChallenge: result.mfaChallenge ? this.convertMFAChallengeToDto(result.mfaChallenge) : undefined,
-        userInfo: result.userInfo
-      };
-    } catch (error) {
-      console.log('Magic link verification failed:', error.message);
-      
-      
+async verifyMagicLink(@Args('token') token: string): Promise<MagicLinkVerificationResultDto> {
+  const startTime = Date.now();
+  const requestId = this.generateCorrelationId();
+  
+  try {
+    console.log(`🔗 [RESOLVER] Starting Magic Link verification for token: ${token.substring(0, 8)}... (Request: ${requestId})`);
+    
+    // ✅ VALIDATION D'ENTRÉE STRICTE
+    if (!token || typeof token !== 'string' || token.trim().length === 0) {
+      console.warn(`❌ [RESOLVER] Invalid token provided: ${token}`);
       return {
         success: false,
-        status: 'failed',
-        message: error.message || 'Magic link verification failed',
+        status: 'invalid',
+        message: 'Token invalide ou manquant',
         accessToken: undefined,
         refreshToken: undefined,
         tokenType: undefined,
@@ -719,7 +709,159 @@ async trustDevice(@Args('input') input: DeviceTrustWithUserInputDto): Promise<De
         userInfo: undefined
       };
     }
+
+    // ✅ VÉRIFICATION DU FORMAT DU TOKEN
+    const tokenRegex = /^[a-f0-9]{32,64}$/;
+    if (!tokenRegex.test(token.trim())) {
+      console.warn(`❌ [RESOLVER] Token format invalid: ${token.substring(0, 8)}...`);
+      return {
+        success: false,
+        status: 'invalid',
+        message: 'Format de token invalide',
+        accessToken: undefined,
+        refreshToken: undefined,
+        tokenType: undefined,
+        expiresIn: undefined,
+        requiresMFA: false,
+        mfaChallenge: undefined,
+        userInfo: undefined
+      };
+    }
+
+    console.debug(`✅ [RESOLVER] Token format validated: ${token.substring(0, 8)}...`);
+
+    // ✅ APPEL AU SERVICE AVEC GESTION D'ERREUR COMPLÈTE
+    console.debug(`🔄 [RESOLVER] Calling magicLinkService.verifyMagicLink...`);
+    
+    const result = await this.authService.verifyMagicLink(token.trim());
+    
+    console.log(`📋 [RESOLVER] AuthService result:`, {
+      success: result.success,
+      status: result.status,
+      hasAuthResponse: !!result.authResponse,
+      hasUserInfo: !!result.userInfo,
+      requiresMFA: result.requiresMFA,
+      duration: Date.now() - startTime,
+      requestId
+    });
+
+    // ✅ TRAITEMENT DU RÉSULTAT AVEC LOGGING DÉTAILLÉ
+    if (result.success) {
+      console.log(`✅ [RESOLVER] Magic Link verified successfully for status: ${result.status}`);
+      
+      // Enrichir userInfo si nécessaire
+      let enrichedUserInfo = result.userInfo;
+      if (result.userInfo && !result.userInfo.organization_ids) {
+        enrichedUserInfo = {
+          ...result.userInfo,
+          organization_ids: [],
+          roles: result.userInfo.roles || []
+        };
+      }
+
+      return {
+        success: true,
+        status: result.status,
+        message: result.message || 'Magic Link vérifié avec succès',
+        accessToken: result.authResponse?.access_token,
+        refreshToken: result.authResponse?.refresh_token,
+        tokenType: result.authResponse?.token_type || 'Bearer',
+        expiresIn: result.authResponse?.expires_in || 3600,
+        requiresMFA: result.requiresMFA || false,
+        mfaChallenge: result.mfaChallenge ? this.convertMFAChallengeToDto(result.mfaChallenge) : undefined,
+        userInfo: enrichedUserInfo
+      };
+      
+    } else {
+      // ✅ GESTION DES ÉCHECS AVEC MESSAGES APPROPRIÉS
+      console.warn(`❌ [RESOLVER] Magic Link verification failed:`, {
+        status: result.status,
+        message: result.message,
+        requestId
+      });
+
+      let userFriendlyMessage = result.message || 'Vérification du Magic Link échouée';
+      
+      // Messages personnalisés selon le statut
+      switch (result.status) {
+        case 'expired':
+          userFriendlyMessage = 'Ce Magic Link a expiré. Veuillez en demander un nouveau.';
+          break;
+        case 'used':
+          userFriendlyMessage = 'Ce Magic Link a déjà été utilisé. Chaque lien ne peut être utilisé qu\'une seule fois.';
+          break;
+        case 'revoked':
+          userFriendlyMessage = 'Ce Magic Link a été révoqué.';
+          break;
+        default:
+          userFriendlyMessage = 'Erreur lors de la vérification du Magic Link.';
+      }
+
+      return {
+        success: false,
+        status: result.status,
+        message: userFriendlyMessage,
+        accessToken: undefined,
+        refreshToken: undefined,
+        tokenType: undefined,
+        expiresIn: undefined,
+        requiresMFA: false,
+        mfaChallenge: undefined,
+        userInfo: undefined
+      };
+    }
+    
+  } catch (error: any) {
+    console.error(`❌ [RESOLVER] Unexpected error during Magic Link verification:`, {
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      name: error.name,
+      requestId,
+      duration: Date.now() - startTime
+    });
+
+    // ✅ ANALYSE DU TYPE D'ERREUR POUR RETOUR APPROPRIÉ
+    let errorMessage = 'Erreur interne lors de la vérification du Magic Link';
+    let errorStatus = 'error';
+
+    if (error.message) {
+      if (error.message.includes('expired') || error.message.includes('expiré')) {
+        errorMessage = 'Ce Magic Link a expiré';
+        errorStatus = 'expired';
+      } else if (error.message.includes('used') || error.message.includes('utilisé')) {
+        errorMessage = 'Ce Magic Link a déjà été utilisé';
+        errorStatus = 'used';
+      } else if (error.message.includes('invalid') || error.message.includes('invalide')) {
+        errorMessage = 'Magic Link invalide';
+        errorStatus = 'invalid';
+      } else if (error.message.includes('network') || error.message.includes('timeout')) {
+        errorMessage = 'Erreur de réseau. Veuillez réessayer.';
+        errorStatus = 'network_error';
+      } else if (error.message.includes('database') || error.message.includes('redis')) {
+        errorMessage = 'Erreur de base de données. Veuillez réessayer plus tard.';
+        errorStatus = 'database_error';
+      }
+    }
+
+    // ✅ RETOUR D'ERREUR STANDARDISÉ
+    return {
+      success: false,
+      status: errorStatus,
+      message: errorMessage,
+      accessToken: undefined,
+      refreshToken: undefined,
+      tokenType: undefined,
+      expiresIn: undefined,
+      requiresMFA: false,
+      mfaChallenge: undefined,
+      userInfo: undefined
+    };
   }
+}
+
+private generateCorrelationId(): string {
+  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
 
   @Mutation(() => PasswordlessAuthResultDto)
   async initiatePasswordlessAuth(@Args('input') input: PasswordlessAuthInputDto): Promise<PasswordlessAuthResultDto> {

@@ -245,15 +245,17 @@ export class MailjetProvider implements EmailProvider {
   }
 
   private buildMagicLinkUrl(token: string, redirectUrl?: string): string {
-    const baseUrl = process.env.BACKEND_URL || 'http://localhost:3001/graphql';
-    const magicLinkPath = '/auth/magic-link/verify';
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const magicLinkPath = '/api/auth/magic-link/verify-and-redirect';
     
-    const url = new URL(magicLinkPath, baseUrl);
+    const url = new URL(magicLinkPath, frontendUrl);
     url.searchParams.set('token', token);
     
     if (redirectUrl) {
-      url.searchParams.set('redirect', encodeURIComponent(redirectUrl));
+      url.searchParams.set('redirect', redirectUrl);
     }
+    
+    console.log(`🔗 Magic Link URL generated: ${url.toString()}`);
     
     return url.toString();
   }
