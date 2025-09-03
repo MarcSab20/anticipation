@@ -204,20 +204,7 @@ jobs:
             
             mkdir -p coverage test-results
             
-            # Création du rapport JSON (syntaxe shell correcte)
-            cat > test-results/dummy-test.json << 'EOFTEST'
-{
-  "success": true,
-  "message": "No tests configured - this is normal for new projects",
-  "timestamp": "PLACEHOLDER_DATE",
-  "coverage": {
-    "lines": 100,
-    "functions": 100,
-    "branches": 100,
-    "statements": 100
-  }
-}
-EOFTEST
+            
             
             # Remplacer le placeholder par la vraie date
             sed -i "s/PLACEHOLDER_DATE/$(date -Iseconds)/" test-results/dummy-test.json
