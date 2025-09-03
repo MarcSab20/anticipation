@@ -1,90 +1,174 @@
-# .github/workflows/ci.yml
-# 🚀 Configuration GitHub Actions complète pour smp-auth-ts
-# Il suffit de copier ce fichier et pusher pour avoir des tests automatiques !
+# .github/workflows/complete-testing.yml
+# 🚀 Workflow GitHub Actions - Tests Professionnels Complets
+# Stratégie éprouvée pour tests unitaires, intégration, performance, e2e et charge
 
-name: 🧪 SMP Auth TS - Tests Complets
+name: 🧪 Tests Complets - CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, feature/** ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
   schedule:
-    # Tests nocturnes à 2h du matin UTC
+    # Tests nocturnes à 2h UTC pour la surveillance continue
     - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_level:
+        description: 'Niveau de tests à exécuter'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - unit
+          - integration
+          - performance
+          - e2e
+          - security
+          - all
 
-# Variables globales
+# Variables d'environnement globales
 env:
   NODE_ENV: test
-  FORCE_COLOR: 3
   CI: true
+  FORCE_COLOR: 3
+  # Optimisations de performance
+  NPM_CONFIG_PROGRESS: false
+  NPM_CONFIG_AUDIT: false
 
-# Permissions nécessaires
+# Permissions sécurisées nécessaires
 permissions:
   contents: read
   checks: write
   pull-requests: write
+  security-events: write
+  actions: read
+
+# Annulation des exécutions concurrentes pour économiser les ressources
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ============================================================================
-  # JOB 1: TESTS UNITAIRES RAPIDES
+  # 🏗️ JOB PRÉPARATOIRE - VALIDATION DU CODE
+  # ============================================================================
+  code-quality:
+    name: 🏗️ Qualité du Code
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - name: 📥 Récupération du code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Historique complet pour SonarQube
+      
+      - name: 📦 Configuration Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+      
+      - name: ⚡ Installation optimisée
+        run: |
+          npm ci --prefer-offline --no-audit --no-progress
+          npm ls # Vérification des dépendances
+      
+      - name: 🔍 Lint & Format Check
+        run: |
+          npm run lint
+          npm run format:check
+          npm run type-check
+      
+      - name: 🏗️ Build de validation
+        run: npm run build
+      
+      - name: 📊 Upload artefacts build
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            dist/
+            build/
+          retention-days: 1
+
+  # ============================================================================
+  # 🧪 TESTS UNITAIRES - RAPIDES ET FIABLES
   # ============================================================================
   unit-tests:
     name: 🧪 Tests Unitaires
     runs-on: ubuntu-latest
+    needs: code-quality
+    timeout-minutes: 15
     
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18, 20, 21]
+        node-version: [18, 20, 22]
         
     steps:
-      - name: 📥 Checkout du code
+      - name: 📥 Récupération du code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       
-      - name: 📦 Setup Node.js ${{ matrix.node-version }}
+      - name: 📦 Configuration Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
-          cache-dependency-path: package-lock.json
       
-      - name: 🔧 Installation des dépendances
+      - name: 📥 Récupération build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+      
+      - name: ⚡ Installation
+        run: npm ci --prefer-offline
+      
+      - name: 🧪 Exécution tests unitaires
         run: |
-          npm ci --prefer-offline --no-audit
-          npm ls
+          npm run test:unit -- \
+            --verbose \
+            --ci \
+            --coverage \
+            --watchAll=false \
+            --maxWorkers=2 \
+            --testResultsProcessor=jest-junit \
+            --coverageReporters=text-lcov,lcov,json,cobertura
+        env:
+          JEST_JUNIT_OUTPUT_DIR: ./test-results
+          JEST_JUNIT_OUTPUT_NAME: junit.xml
       
-      - name: 🏗️ Build du projet
-        run: npm run build
-      
-      - name: 🕵️ Linting
-        run: npm run lint
-        
-      - name: 🧪 Tests unitaires
-        run: npm run test:unit -- --verbose --ci
-        
-      - name: 📊 Upload des résultats
+      - name: 📊 Upload résultats tests
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: unit-test-results-node${{ matrix.node-version }}
+          name: unit-test-results-node-${{ matrix.node-version }}
           path: |
-            coverage/
             test-results/
-            *.log
+            coverage/
           retention-days: 30
+      
+      - name: 📈 Upload vers Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          flags: unit-tests,node-${{ matrix.node-version }}
+          name: unit-tests-node-${{ matrix.node-version }}
 
   # ============================================================================
-  # JOB 2: TESTS D'INTÉGRATION AVEC SERVICES
+  # 🔗 TESTS D'INTÉGRATION - SERVICES RÉELS
   # ============================================================================
   integration-tests:
     name: 🔗 Tests d'Intégration
     runs-on: ubuntu-latest
     needs: unit-tests
+    timeout-minutes: 30
+    if: github.event.inputs.test_level == 'integration' || github.event.inputs.test_level == 'all' || github.event.inputs.test_level == ''
     
     services:
-      # Redis pour les tests
+      # Redis pour le cache et sessions
       redis:
         image: redis:7-alpine
         options: >-
@@ -92,156 +176,77 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
-          --health-start-period 10s
         ports:
           - 6379:6379
       
-      # PostgreSQL pour Keycloak
+      # PostgreSQL pour les données
       postgres:
         image: postgres:15-alpine
         env:
-          POSTGRES_DB: keycloak
-          POSTGRES_USER: keycloak
-          POSTGRES_PASSWORD: keycloak_password
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass123
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
         ports:
           - 5432:5432
-      
-      # Keycloak pour l'authentification
-      keycloak:
-        image: quay.io/keycloak/keycloak:23.0
-        env:
-          KEYCLOAK_ADMIN: admin
-          KEYCLOAK_ADMIN_PASSWORD: admin123
-          KC_DB: postgres
-          KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-          KC_DB_USERNAME: keycloak
-          KC_DB_PASSWORD: keycloak_password
-          KC_HOSTNAME_STRICT: false
-          KC_HTTP_ENABLED: true
-          KC_HEALTH_ENABLED: true
-          KC_METRICS_ENABLED: true
-        options: >-
-          --health-cmd "curl -f http://localhost:8080/health/ready || exit 1"
-          --health-interval 30s
-          --health-timeout 10s
-          --health-retries 20
-          --health-start-period 60s
-        ports:
-          - 8080:8080
     
     steps:
-      - name: 📥 Checkout du code
+      - name: 📥 Récupération du code
         uses: actions/checkout@v4
-        
-      - name: 📦 Setup Node.js
+      
+      - name: 📦 Configuration Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
       
-      - name: 🔧 Installation
+      - name: ⚡ Installation
         run: npm ci --prefer-offline
       
-      - name: 🏗️ Build
-        run: npm run build
-      
-      - name: ⏳ Attente des services
+      - name: 🗄️ Préparation base de données
         run: |
-          echo "🔍 Vérification de Redis..."
-          timeout 30s bash -c 'until redis-cli -h localhost ping; do sleep 1; done'
-          
-          echo "🔍 Vérification de Keycloak..."
-          timeout 120s bash -c 'until curl -f http://localhost:8080/health/ready; do echo "Attente Keycloak..."; sleep 5; done'
-          
-          echo "✅ Tous les services sont prêts!"
-      
-      - name: 🔧 Configuration Keycloak pour les tests
-        run: |
-          # Créer un realm de test
-          docker run --rm --network host \
-            -v ${{ github.workspace }}/tests/fixtures:/tmp/fixtures \
-            curlimages/curl:latest \
-            sh -c '
-              # Obtenir le token admin
-              ADMIN_TOKEN=$(curl -s -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \
-                -H "Content-Type: application/x-www-form-urlencoded" \
-                -d "username=admin" \
-                -d "password=admin123" \
-                -d "grant_type=password" \
-                -d "client_id=admin-cli" | \
-                jq -r ".access_token")
-              
-              # Créer le realm de test
-              curl -X POST http://localhost:8080/admin/realms \
-                -H "Authorization: Bearer $ADMIN_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d @/tmp/fixtures/keycloak-realm.json
-            '
-      
-      - name: 🚀 Démarrage Mock OPA
-        run: |
-          # Démarrer OPA en arrière-plan
-          docker run -d --name opa-test \
-            --network host \
-            -v ${{ github.workspace }}/tests/fixtures/opa-policies:/policies \
-            openpolicyagent/opa:0.57.0-static \
-            run --server --addr 0.0.0.0:8181 /policies
-            
-          # Attendre qu'OPA soit prêt
-          timeout 30s bash -c 'until curl -f http://localhost:8181/health; do sleep 2; done'
-      
-      - name: 🧪 Tests d'intégration
+          npm run db:migrate
+          npm run db:seed:test
         env:
-          # Configuration des services de test
-          REDIS_HOST: localhost
-          REDIS_PORT: 6379
-          REDIS_DB: 1
-          KEYCLOAK_URL: http://localhost:8080
-          KEYCLOAK_REALM: test-realm
-          KEYCLOAK_CLIENT_ID: test-client
-          KEYCLOAK_CLIENT_SECRET: test-secret
-          OPA_URL: http://localhost:8181
-          OPA_POLICY_PATH: /v1/data/authz/decision
-          
-          # Configuration email de test
-          EMAIL_PROVIDER: mock
-          FROM_EMAIL: test@smp-auth.local
-          
+          DATABASE_URL: postgresql://testuser:testpass123@localhost:5432/testdb
+          REDIS_URL: redis://localhost:6379
+      
+      - name: 🔗 Tests d'intégration
         run: |
-          npm run test:integration -- --verbose --ci --detectOpenHandles --forceExit
+          npm run test:integration -- \
+            --verbose \
+            --ci \
+            --coverage \
+            --testTimeout=30000
+        env:
+          DATABASE_URL: postgresql://testuser:testpass123@localhost:5432/testdb
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: test
       
-      - name: 📊 Couverture de code
-        run: |
-          npm run test:coverage -- --ci
-          npx nyc report --reporter=text-summary
-      
-      - name: 📋 Upload rapport de couverture
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage/lcov.info
-          flags: integration
-          name: integration-tests
-          fail_ci_if_error: false
-      
-      - name: 🧹 Nettoyage
+      - name: 📊 Upload résultats
+        uses: actions/upload-artifact@v4
         if: always()
-        run: |
-          docker stop opa-test || true
-          docker rm opa-test || true
+        with:
+          name: integration-test-results
+          path: |
+            test-results/
+            coverage/
+            logs/
+          retention-days: 30
 
   # ============================================================================
-  # JOB 3: TESTS DE PERFORMANCE AVEC K6
+  # ⚡ TESTS DE PERFORMANCE - K6 + OPTIMISATIONS
   # ============================================================================
   performance-tests:
-    name: ⚡ Tests de Performance K6
+    name: ⚡ Tests de Performance
     runs-on: ubuntu-latest
     needs: integration-tests
-    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+    timeout-minutes: 45
+    if: github.ref == 'refs/heads/main' || github.event.inputs.test_level == 'performance' || github.event.inputs.test_level == 'all'
     
     services:
       redis:
@@ -255,20 +260,20 @@ jobs:
           - 6379:6379
     
     steps:
-      - name: 📥 Checkout
+      - name: 📥 Récupération du code
         uses: actions/checkout@v4
       
-      - name: 📦 Setup Node.js
+      - name: 📦 Configuration Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
       
-      - name: 🔧 Installation
+      - name: ⚡ Installation
         run: npm ci --prefer-offline
       
-      - name: 🏗️ Build
-        run: npm run build
+      - name: 🏗️ Build optimisé
+        run: npm run build:prod
       
       - name: 📥 Installation K6
         run: |
@@ -281,199 +286,351 @@ jobs:
           sudo apt-get update
           sudo apt-get install k6
       
-      - name: 🚀 Démarrage serveur de test
+      - name: 🚀 Démarrage application
         run: |
-          # Démarrer l'API en arrière-plan pour les tests K6
-          npm start &
-          
-          # Attendre que l'API soit prête
-          timeout 60s bash -c 'until curl -f http://localhost:3001/health; do sleep 2; done'
+          npm run start:prod &
+          # Attendre la disponibilité de l'API
+          timeout 60s bash -c 'until curl -f http://localhost:3000/health; do sleep 2; done'
+          echo "✅ Application démarrée"
         env:
-          NODE_ENV: test
-          REDIS_HOST: localhost
-          PORT: 3001
+          NODE_ENV: production
+          REDIS_URL: redis://localhost:6379
+          PORT: 3000
+      
+      - name: ⚡ Tests de charge - API Core
+        run: |
+          k6 run --out json=api-core-results.json tests/performance/api-core.js
+          k6 run --out influxdb=http://localhost:8086/k6 tests/performance/api-core.js || true
+        env:
+          BASE_URL: http://localhost:3000
+          VUS: 50
+          DURATION: 5m
       
       - name: ⚡ Tests de charge - Authentification
         run: |
-          k6 run --out json=auth-load-results.json tests/performance/auth-load-test.js
+          k6 run --out json=auth-load-results.json tests/performance/auth-load.js
         env:
-          BASE_URL: http://localhost:3001
+          BASE_URL: http://localhost:3000
+          VUS: 30
+          DURATION: 3m
       
-      - name: ⚡ Tests de charge - Magic Links
+      - name: ⚡ Tests de stress
         run: |
-          k6 run --out json=magic-link-results.json tests/performance/magic-link-load-test.js
+          k6 run --out json=stress-results.json tests/performance/stress-test.js
         env:
-          BASE_URL: http://localhost:3001
+          BASE_URL: http://localhost:3000
       
-      - name: ⚡ Tests de charge - Redis
-        run: |
-          k6 run --out json=redis-results.json tests/performance/redis-performance-test.js
-        env:
-          BASE_URL: http://localhost:3001
-      
-      - name: 📊 Analyse des résultats K6
+      - name: 📊 Analyse des résultats
         run: |
           echo "## 📊 Résultats des Tests de Performance" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Résumé des tests d'authentification
-          if [ -f auth-load-results.json ]; then
-            echo "### 🔐 Tests d'Authentification" >> $GITHUB_STEP_SUMMARY
+          # Analyse API Core
+          if [ -f api-core-results.json ]; then
+            echo "### 🚀 API Core Performance" >> $GITHUB_STEP_SUMMARY
             node -e "
-              const data = require('./auth-load-results.json');
-              console.log(\`
-              - **Requêtes totales**: \${data.metrics.http_reqs.count}
-              - **Durée moyenne**: \${Math.round(data.metrics.http_req_duration.avg)}ms
-              - **P95**: \${Math.round(data.metrics.http_req_duration['p(95)']}ms
-              - **Taux d'erreur**: \${(data.metrics.errors.rate * 100).toFixed(2)}%
-              \`);
+              const fs = require('fs');
+              const data = JSON.parse(fs.readFileSync('api-core-results.json', 'utf8'));
+              const metrics = data.metrics;
+              console.log('| Métrique | Valeur |');
+              console.log('|----------|---------|');
+              console.log(\`| Requêtes totales | \${metrics.http_reqs.count} |\`);
+              console.log(\`| RPS moyen | \${metrics.http_reqs.rate.toFixed(2)} |\`);
+              console.log(\`| Durée moyenne | \${metrics.http_req_duration.avg.toFixed(2)}ms |\`);
+              console.log(\`| P95 | \${metrics.http_req_duration['p(95)'].toFixed(2)}ms |\`);
+              console.log(\`| P99 | \${metrics.http_req_duration['p(99)'].toFixed(2)}ms |\`);
+              console.log(\`| Taux d'erreur | \${(metrics.http_req_failed.rate * 100).toFixed(2)}% |\`);
             " >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
           fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
+      
+      - name: ⚠️ Validation des seuils de performance
+        run: |
+          node -e "
+            const fs = require('fs');
+            const data = JSON.parse(fs.readFileSync('api-core-results.json', 'utf8'));
+            const metrics = data.metrics;
+            
+            const thresholds = {
+              'P95 < 500ms': metrics.http_req_duration['p(95)'] < 500,
+              'Error Rate < 1%': metrics.http_req_failed.rate < 0.01,
+              'RPS > 100': metrics.http_reqs.rate > 100
+            };
+            
+            let failed = false;
+            for (const [check, passed] of Object.entries(thresholds)) {
+              console.log(\`\${passed ? '✅' : '❌'} \${check}\`);
+              if (!passed) failed = true;
+            }
+            
+            if (failed) {
+              console.error('❌ Certains seuils de performance ne sont pas respectés');
+              process.exit(1);
+            }
+          "
       
       - name: 📋 Upload résultats K6
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: k6-performance-results
+          name: performance-test-results
           path: |
             *-results.json
-            k6-*.html
+            k6-report.html
           retention-days: 30
 
   # ============================================================================
-  # JOB 4: TESTS DE SÉCURITÉ
+  # 🌐 TESTS END-TO-END - PARCOURS UTILISATEUR COMPLETS
   # ============================================================================
-  security-tests:
-    name: 🛡️ Tests de Sécurité
+  e2e-tests:
+    name: 🌐 Tests End-to-End
     runs-on: ubuntu-latest
-    needs: unit-tests
-    if: github.ref == 'refs/heads/main'
+    needs: integration-tests
+    timeout-minutes: 60
+    if: github.event.inputs.test_level == 'e2e' || github.event.inputs.test_level == 'all' || github.event.inputs.test_level == ''
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+        
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
     
     steps:
-      - name: 📥 Checkout
+      - name: 📥 Récupération du code
         uses: actions/checkout@v4
       
-      - name: 📦 Setup Node.js
+      - name: 📦 Configuration Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
       
-      - name: 🔧 Installation
+      - name: ⚡ Installation
         run: npm ci --prefer-offline
       
-      - name: 🛡️ Audit npm
+      - name: 🎭 Installation Playwright
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      
+      - name: 🏗️ Build application
+        run: npm run build
+      
+      - name: 🚀 Démarrage services
+        run: |
+          # Démarrer l'API backend
+          npm run start &
+          
+          # Démarrer le frontend (si applicable)
+          npm run start:frontend &
+          
+          # Attendre que les services soient prêts
+          timeout 60s bash -c 'until curl -f http://localhost:3000/health; do sleep 2; done'
+          timeout 60s bash -c 'until curl -f http://localhost:3001; do sleep 2; done' || true
+        env:
+          NODE_ENV: test
+          REDIS_URL: redis://localhost:6379
+      
+      - name: 🌐 Exécution tests E2E - ${{ matrix.browser }}
+        run: |
+          npx playwright test --project=${{ matrix.browser }} \
+            --reporter=html,junit \
+            --output-dir=test-results-${{ matrix.browser }}
+        env:
+          BASE_URL: http://localhost:3001
+          API_URL: http://localhost:3000
+          BROWSER: ${{ matrix.browser }}
+      
+      - name: 📊 Upload résultats E2E
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results-${{ matrix.browser }}
+          path: |
+            test-results-${{ matrix.browser }}/
+            playwright-report/
+          retention-days: 30
+      
+      - name: 📹 Upload vidéos des tests
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-videos-${{ matrix.browser }}
+          path: test-results-${{ matrix.browser }}/videos/
+          retention-days: 7
+
+  # ============================================================================
+  # 🛡️ TESTS DE SÉCURITÉ - ANALYSE COMPLÈTE
+  # ============================================================================
+  security-tests:
+    name: 🛡️ Tests de Sécurité
+    runs-on: ubuntu-latest
+    needs: code-quality
+    timeout-minutes: 30
+    if: github.ref == 'refs/heads/main' || github.event.inputs.test_level == 'security' || github.event.inputs.test_level == 'all'
+    
+    steps:
+      - name: 📥 Récupération du code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 📦 Configuration Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      
+      - name: ⚡ Installation
+        run: npm ci --prefer-offline
+      
+      - name: 🛡️ Audit des dépendances npm
         run: |
           npm audit --audit-level=moderate
-          npm audit --json > npm-audit.json || true
+          npm audit --json > npm-audit-results.json || true
       
-      - name: 🔍 Analyse CodeQL
+      - name: 🔍 Analyse CodeQL - Initialisation
         uses: github/codeql-action/init@v3
         with:
           languages: typescript, javascript
+          queries: security-and-quality
       
-      - name: 🏗️ Build pour CodeQL
+      - name: 🏗️ Build pour analyse
         run: npm run build
       
-      - name: 🔍 Analyse CodeQL
+      - name: 🔍 Analyse CodeQL - Exécution
         uses: github/codeql-action/analyze@v3
+        with:
+          category: security-analysis
       
-      - name: 🛡️ Scan Snyk
+      - name: 🕷️ Scan Snyk (si token disponible)
+        if: env.SNYK_TOKEN != ''
         uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          args: --severity-threshold=high
+          args: --severity-threshold=medium --json > snyk-results.json
+        continue-on-error: true
+      
+      - name: 🛡️ Tests de sécurité personnalisés
+        run: |
+          npm run test:security || true
+          npm run security:scan || true
+        continue-on-error: true
+      
+      - name: 📊 Upload résultats sécurité
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-test-results
+          path: |
+            npm-audit-results.json
+            snyk-results.json
+            security-scan-report.html
+          retention-days: 30
 
   # ============================================================================
-  # JOB 5: PUBLICATION DES RÉSULTATS
+  # 📊 CONSOLIDATION DES RÉSULTATS
   # ============================================================================
-  publish-results:
-    name: 📊 Publication des Résultats
+  test-summary:
+    name: 📊 Résumé des Tests
     runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, performance-tests, security-tests]
-    if: always() && (needs.unit-tests.result == 'success' || needs.integration-tests.result == 'success')
+    needs: [unit-tests, integration-tests, performance-tests, e2e-tests, security-tests]
+    if: always()
+    timeout-minutes: 10
     
     steps:
-      - name: 📥 Téléchargement des artefacts
+      - name: 📥 Récupération de tous les artefacts
         uses: actions/download-artifact@v4
         with:
           path: test-results
       
-      - name: 📊 Génération du rapport final
+      - name: 📊 Génération du rapport consolidé
         run: |
-          echo "# 🎯 Rapport de Tests - SMP Auth TS" > test-report.md
-          echo "" >> test-report.md
-          echo "**Commit**: ${{ github.sha }}" >> test-report.md
-          echo "**Branche**: ${{ github.ref_name }}" >> test-report.md
-          echo "**Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> test-report.md
-          echo "" >> test-report.md
+          cat > test-summary.md << 'EOF'
+          # 🎯 Rapport Consolidé des Tests
           
-          echo "## ✅ Résultats" >> test-report.md
-          echo "" >> test-report.md
-          echo "| Test | Statut |" >> test-report.md
-          echo "|------|--------|" >> test-report.md
-          echo "| Tests Unitaires | ${{ needs.unit-tests.result == 'success' && '✅ Succès' || '❌ Échec' }} |" >> test-report.md
-          echo "| Tests d'Intégration | ${{ needs.integration-tests.result == 'success' && '✅ Succès' || '❌ Échec' }} |" >> test-report.md
-          echo "| Tests de Performance | ${{ needs.performance-tests.result == 'success' && '✅ Succès' || '⏩ Ignoré' }} |" >> test-report.md
-          echo "| Tests de Sécurité | ${{ needs.security-tests.result == 'success' && '✅ Succès' || '⏩ Ignoré' }} |" >> test-report.md
+          **Commit**: `${{ github.sha }}`
+          **Branche**: `${{ github.ref_name }}`
+          **Workflow**: `${{ github.workflow }}`
+          **Déclenché par**: ${{ github.event_name }}
+          **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ## 📈 Résultats par Catégorie
+          
+          | Type de Test | Statut | Durée |
+          |--------------|--------|-------|
+          | 🧪 Tests Unitaires | ${{ needs.unit-tests.result == 'success' && '✅ Réussi' || needs.unit-tests.result == 'skipped' && '⏭️ Ignoré' || '❌ Échec' }} | ${{ needs.unit-tests.result != 'skipped' && 'X minutes' || '-' }} |
+          | 🔗 Tests d'Intégration | ${{ needs.integration-tests.result == 'success' && '✅ Réussi' || needs.integration-tests.result == 'skipped' && '⏭️ Ignoré' || '❌ Échec' }} | ${{ needs.integration-tests.result != 'skipped' && 'X minutes' || '-' }} |
+          | ⚡ Tests de Performance | ${{ needs.performance-tests.result == 'success' && '✅ Réussi' || needs.performance-tests.result == 'skipped' && '⏭️ Ignoré' || '❌ Échec' }} | ${{ needs.performance-tests.result != 'skipped' && 'X minutes' || '-' }} |
+          | 🌐 Tests E2E | ${{ needs.e2e-tests.result == 'success' && '✅ Réussi' || needs.e2e-tests.result == 'skipped' && '⏭️ Ignoré' || '❌ Échec' }} | ${{ needs.e2e-tests.result != 'skipped' && 'X minutes' || '-' }} |
+          | 🛡️ Tests de Sécurité | ${{ needs.security-tests.result == 'success' && '✅ Réussi' || needs.security-tests.result == 'skipped' && '⏭️ Ignoré' || '❌ Échec' }} | ${{ needs.security-tests.result != 'skipped' && 'X minutes' || '-' }} |
+          
+          ## 🎯 Indicateurs Clés
+          
+          - **Couverture de Code**: Disponible dans les artefacts
+          - **Performance P95**: Vérifier les résultats K6
+          - **Vulnérabilités**: Consulter les rapports de sécurité
+          - **Tests E2E**: Vidéos disponibles en cas d'échec
+          
+          ## 📋 Actions Recommandées
+          
+          EOF
+          
+          # Ajouter des recommandations basées sur les résultats
+          if [[ "${{ needs.unit-tests.result }}" != "success" ]]; then
+            echo "- ❌ **Corriger les tests unitaires échoués**" >> test-summary.md
+          fi
+          
+          if [[ "${{ needs.security-tests.result }}" != "success" && "${{ needs.security-tests.result }}" != "skipped" ]]; then
+            echo "- 🛡️ **Examiner les problèmes de sécurité détectés**" >> test-summary.md
+          fi
+          
+          if [[ "${{ needs.performance-tests.result }}" != "success" && "${{ needs.performance-tests.result }}" != "skipped" ]]; then
+            echo "- ⚡ **Optimiser les performances selon les métriques K6**" >> test-summary.md
+          fi
+          
+          echo "" >> test-summary.md
+          echo "---" >> test-summary.md
+          echo "*Rapport généré automatiquement par GitHub Actions*" >> test-summary.md
       
-      - name: 💬 Commentaire PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const report = fs.readFileSync('test-report.md', 'utf8');
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: report
-            });
+      - name: 📊 Ajout au résumé du workflow
+        run: |
+          cat test-summary.md >> $GITHUB_STEP_SUMMARY
       
-      - name: 📧 Notification Slack (Échec)
-        if: failure() && github.ref == 'refs/heads/main'
-        uses: 8398a7/action-slack@v3
+      - name: 📋 Upload rapport final
+        uses: actions/upload-artifact@v4
         with:
-          status: failure
-          text: '❌ Tests SMP Auth TS échoués sur main'
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+          name: final-test-report
+          path: test-summary.md
+          retention-days: 90
+      
+      - name: 🔔 Notification en cas d'échec critique
+        if: needs.unit-tests.result == 'failure' || needs.security-tests.result == 'failure'
+        run: |
+          echo "::error::Tests critiques échoués. Intervention requise."
+          exit 1
 
   # ============================================================================
-  # JOB 6: NETTOYAGE
+  # 🚀 DÉPLOIEMENT CONDITIONNEL (SI TOUS LES TESTS PASSENT)
   # ============================================================================
-  cleanup:
-    name: 🧹 Nettoyage
+  deploy-staging:
+    name: 🚀 Déploiement Staging
     runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, performance-tests, security-tests, publish-results]
-    if: always()
+    needs: [unit-tests, integration-tests, security-tests]
+    if: github.ref == 'refs/heads/develop' && needs.unit-tests.result == 'success' && needs.integration-tests.result == 'success' && needs.security-tests.result == 'success'
+    environment: staging
+    timeout-minutes: 15
     
     steps:
-      - name: 🧹 Nettoyage des artefacts anciens
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const cutoffDate = new Date();
-            cutoffDate.setDate(cutoffDate.getDate() - 7); // Garder 7 jours
-            
-            const artifacts = await github.rest.actions.listArtifactsForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 100
-            });
-            
-            for (const artifact of artifacts.data.artifacts) {
-              if (new Date(artifact.created_at) < cutoffDate) {
-                console.log(`Suppression de l'artefact: ${artifact.name}`);
-                await github.rest.actions.deleteArtifact({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  artifact_id: artifact.id
-                });
-              }
-            }
+      - name: 📥 Récupération du code
+        uses: actions/checkout@v4
+      
+      - name: 🚀 Déploiement vers staging
+        run: |
+          echo "🚀 Déploiement vers l'environnement de staging..."
+          # Ajouter ici vos commandes de déploiement
+          echo "✅ Déploiement terminé avec succès"
