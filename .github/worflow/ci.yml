@@ -1,0 +1,476 @@
+
+name: 🧪 SMP Auth TS - Tests Complets
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Tests nocturnes à 2h du matin UTC
+    - cron: '0 2 * * *'
+
+# Variables globales
+env:
+  NODE_ENV: test
+  FORCE_COLOR: 3
+  CI: true
+
+# Permissions nécessaires
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  # ============================================================================
+  # JOB 1: TESTS UNITAIRES RAPIDES
+  # ============================================================================
+  unit-tests:
+    name: 🧪 Tests Unitaires
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18, 20, 21]
+        
+    steps:
+      - name: 📥 Checkout du code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 📦 Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+      
+      - name: 🔧 Installation des dépendances
+        run: |
+          npm ci --prefer-offline --no-audit
+          npm ls
+      
+      - name: 🏗️ Build du projet
+        run: npm run build
+      
+      - name: 🕵️ Linting
+        run: npm run lint
+        
+      - name: 🧪 Tests unitaires
+        run: npm run test:unit -- --verbose --ci
+        
+      - name: 📊 Upload des résultats
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results-node${{ matrix.node-version }}
+          path: |
+            coverage/
+            test-results/
+            *.log
+          retention-days: 30
+
+  # ============================================================================
+  # JOB 2: TESTS D'INTÉGRATION AVEC SERVICES
+  # ============================================================================
+  integration-tests:
+    name: 🔗 Tests d'Intégration
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    services:
+      # Redis pour les tests
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 10s
+        ports:
+          - 6379:6379
+      
+      # PostgreSQL pour Keycloak
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: keycloak
+          POSTGRES_USER: keycloak
+          POSTGRES_PASSWORD: keycloak_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      # Keycloak pour l'authentification
+      keycloak:
+        image: quay.io/keycloak/keycloak:23.0
+        env:
+          KEYCLOAK_ADMIN: admin
+          KEYCLOAK_ADMIN_PASSWORD: admin123
+          KC_DB: postgres
+          KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+          KC_DB_USERNAME: keycloak
+          KC_DB_PASSWORD: keycloak_password
+          KC_HOSTNAME_STRICT: false
+          KC_HTTP_ENABLED: true
+          KC_HEALTH_ENABLED: true
+          KC_METRICS_ENABLED: true
+        options: >-
+          --health-cmd "curl -f http://localhost:8080/health/ready || exit 1"
+          --health-interval 30s
+          --health-timeout 10s
+          --health-retries 20
+          --health-start-period 60s
+        ports:
+          - 8080:8080
+    
+    steps:
+      - name: 📥 Checkout du code
+        uses: actions/checkout@v4
+        
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      
+      - name: 🔧 Installation
+        run: npm ci --prefer-offline
+      
+      - name: 🏗️ Build
+        run: npm run build
+      
+      - name: ⏳ Attente des services
+        run: |
+          echo "🔍 Vérification de Redis..."
+          timeout 30s bash -c 'until redis-cli -h localhost ping; do sleep 1; done'
+          
+          echo "🔍 Vérification de Keycloak..."
+          timeout 120s bash -c 'until curl -f http://localhost:8080/health/ready; do echo "Attente Keycloak..."; sleep 5; done'
+          
+          echo "✅ Tous les services sont prêts!"
+      
+      - name: 🔧 Configuration Keycloak pour les tests
+        run: |
+          # Créer un realm de test
+          docker run --rm --network host \
+            -v ${{ github.workspace }}/tests/fixtures:/tmp/fixtures \
+            curlimages/curl:latest \
+            sh -c '
+              # Obtenir le token admin
+              ADMIN_TOKEN=$(curl -s -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \
+                -H "Content-Type: application/x-www-form-urlencoded" \
+                -d "username=admin" \
+                -d "password=admin123" \
+                -d "grant_type=password" \
+                -d "client_id=admin-cli" | \
+                jq -r ".access_token")
+              
+              # Créer le realm de test
+              curl -X POST http://localhost:8080/admin/realms \
+                -H "Authorization: Bearer $ADMIN_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d @/tmp/fixtures/keycloak-realm.json
+            '
+      
+      - name: 🚀 Démarrage Mock OPA
+        run: |
+          # Démarrer OPA en arrière-plan
+          docker run -d --name opa-test \
+            --network host \
+            -v ${{ github.workspace }}/tests/fixtures/opa-policies:/policies \
+            openpolicyagent/opa:0.57.0-static \
+            run --server --addr 0.0.0.0:8181 /policies
+            
+          # Attendre qu'OPA soit prêt
+          timeout 30s bash -c 'until curl -f http://localhost:8181/health; do sleep 2; done'
+      
+      - name: 🧪 Tests d'intégration
+        env:
+          # Configuration des services de test
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          REDIS_DB: 1
+          KEYCLOAK_URL: http://localhost:8080
+          KEYCLOAK_REALM: test-realm
+          KEYCLOAK_CLIENT_ID: test-client
+          KEYCLOAK_CLIENT_SECRET: test-secret
+          OPA_URL: http://localhost:8181
+          OPA_POLICY_PATH: /v1/data/authz/decision
+          
+          # Configuration email de test
+          EMAIL_PROVIDER: mock
+          FROM_EMAIL: test@smp-auth.local
+          
+        run: |
+          npm run test:integration -- --verbose --ci --detectOpenHandles --forceExit
+      
+      - name: 📊 Couverture de code
+        run: |
+          npm run test:coverage -- --ci
+          npx nyc report --reporter=text-summary
+      
+      - name: 📋 Upload rapport de couverture
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          flags: integration
+          name: integration-tests
+          fail_ci_if_error: false
+      
+      - name: 🧹 Nettoyage
+        if: always()
+        run: |
+          docker stop opa-test || true
+          docker rm opa-test || true
+
+  # ============================================================================
+  # JOB 3: TESTS DE PERFORMANCE AVEC K6
+  # ============================================================================
+  performance-tests:
+    name: ⚡ Tests de Performance K6
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+    
+    services:
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+      
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      
+      - name: 🔧 Installation
+        run: npm ci --prefer-offline
+      
+      - name: 🏗️ Build
+        run: npm run build
+      
+      - name: 📥 Installation K6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | \
+            sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+      
+      - name: 🚀 Démarrage serveur de test
+        run: |
+          # Démarrer l'API en arrière-plan pour les tests K6
+          npm start &
+          
+          # Attendre que l'API soit prête
+          timeout 60s bash -c 'until curl -f http://localhost:3001/health; do sleep 2; done'
+        env:
+          NODE_ENV: test
+          REDIS_HOST: localhost
+          PORT: 3001
+      
+      - name: ⚡ Tests de charge - Authentification
+        run: |
+          k6 run --out json=auth-load-results.json tests/performance/auth-load-test.js
+        env:
+          BASE_URL: http://localhost:3001
+      
+      - name: ⚡ Tests de charge - Magic Links
+        run: |
+          k6 run --out json=magic-link-results.json tests/performance/magic-link-load-test.js
+        env:
+          BASE_URL: http://localhost:3001
+      
+      - name: ⚡ Tests de charge - Redis
+        run: |
+          k6 run --out json=redis-results.json tests/performance/redis-performance-test.js
+        env:
+          BASE_URL: http://localhost:3001
+      
+      - name: 📊 Analyse des résultats K6
+        run: |
+          echo "## 📊 Résultats des Tests de Performance" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Résumé des tests d'authentification
+          if [ -f auth-load-results.json ]; then
+            echo "### 🔐 Tests d'Authentification" >> $GITHUB_STEP_SUMMARY
+            node -e "
+              const data = require('./auth-load-results.json');
+              console.log(\`
+              - **Requêtes totales**: \${data.metrics.http_reqs.count}
+              - **Durée moyenne**: \${Math.round(data.metrics.http_req_duration.avg)}ms
+              - **P95**: \${Math.round(data.metrics.http_req_duration['p(95)']}ms
+              - **Taux d'erreur**: \${(data.metrics.errors.rate * 100).toFixed(2)}%
+              \`);
+            " >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+      
+      - name: 📋 Upload résultats K6
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-performance-results
+          path: |
+            *-results.json
+            k6-*.html
+          retention-days: 30
+
+  # ============================================================================
+  # JOB 4: TESTS DE SÉCURITÉ
+  # ============================================================================
+  security-tests:
+    name: 🛡️ Tests de Sécurité
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+      
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      
+      - name: 🔧 Installation
+        run: npm ci --prefer-offline
+      
+      - name: 🛡️ Audit npm
+        run: |
+          npm audit --audit-level=moderate
+          npm audit --json > npm-audit.json || true
+      
+      - name: 🔍 Analyse CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: typescript, javascript
+      
+      - name: 🏗️ Build pour CodeQL
+        run: npm run build
+      
+      - name: 🔍 Analyse CodeQL
+        uses: github/codeql-action/analyze@v3
+      
+      - name: 🛡️ Scan Snyk
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+
+  # ============================================================================
+  # JOB 5: PUBLICATION DES RÉSULTATS
+  # ============================================================================
+  publish-results:
+    name: 📊 Publication des Résultats
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, performance-tests, security-tests]
+    if: always() && (needs.unit-tests.result == 'success' || needs.integration-tests.result == 'success')
+    
+    steps:
+      - name: 📥 Téléchargement des artefacts
+        uses: actions/download-artifact@v4
+        with:
+          path: test-results
+      
+      - name: 📊 Génération du rapport final
+        run: |
+          echo "# 🎯 Rapport de Tests - SMP Auth TS" > test-report.md
+          echo "" >> test-report.md
+          echo "**Commit**: ${{ github.sha }}" >> test-report.md
+          echo "**Branche**: ${{ github.ref_name }}" >> test-report.md
+          echo "**Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> test-report.md
+          echo "" >> test-report.md
+          
+          echo "## ✅ Résultats" >> test-report.md
+          echo "" >> test-report.md
+          echo "| Test | Statut |" >> test-report.md
+          echo "|------|--------|" >> test-report.md
+          echo "| Tests Unitaires | ${{ needs.unit-tests.result == 'success' && '✅ Succès' || '❌ Échec' }} |" >> test-report.md
+          echo "| Tests d'Intégration | ${{ needs.integration-tests.result == 'success' && '✅ Succès' || '❌ Échec' }} |" >> test-report.md
+          echo "| Tests de Performance | ${{ needs.performance-tests.result == 'success' && '✅ Succès' || '⏩ Ignoré' }} |" >> test-report.md
+          echo "| Tests de Sécurité | ${{ needs.security-tests.result == 'success' && '✅ Succès' || '⏩ Ignoré' }} |" >> test-report.md
+      
+      - name: 💬 Commentaire PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('test-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+      
+      - name: 📧 Notification Slack (Échec)
+        if: failure() && github.ref == 'refs/heads/main'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: '❌ Tests SMP Auth TS échoués sur main'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+  # ============================================================================
+  # JOB 6: NETTOYAGE
+  # ============================================================================
+  cleanup:
+    name: 🧹 Nettoyage
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, performance-tests, security-tests, publish-results]
+    if: always()
+    
+    steps:
+      - name: 🧹 Nettoyage des artefacts anciens
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - 7); // Garder 7 jours
+            
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            
+            for (const artifact of artifacts.data.artifacts) {
+              if (new Date(artifact.created_at) < cutoffDate) {
+                console.log(`Suppression de l'artefact: ${artifact.name}`);
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id
+                });
+              }
+            }
