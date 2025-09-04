@@ -1,0 +1,46 @@
+{
+  "name": "mu-organization",
+  "version": "1.1.2",
+  "type": "module",
+  "main": "organization.mjs",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "start": "node organization.mjs",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --detectOpenHandles",
+    "build": "echo \"BUILD PROCESS ENDED NOTHING TO DO\"",
+    "stop": "pkill node"
+  },
+  "keywords": [],
+  "author": "Services",
+  "license": "Copyright Services 2024",
+  "dependencies": {
+    "@apollo/server": "^4.11.3",
+    "@apollo/subgraph": "^2.10.0",
+    "@graphql-tools/merge": "^9.0.7",
+    "amqp": "^0.2.7",
+    "amqplib": "^0.10.4",
+    "fs": "^0.0.1-security",
+    "graphql-subscriptions": "^2.0.0",
+    "graphql-tag": "^2.12.6",
+    "graphql-ws": "^6.0.4",
+    "https": "^1.0.0",
+    "nanoid": "^5.1.5",
+    "nodemon": "^3.1.4",
+    "smp-bef-utils": "github:sylorion/smp-bef-utils",
+    "smp-core-schema": "github:sylorion/smp-core-schema#dev",
+    "smp-core-tools": "github:sylorion/smp-core-tools",
+    "smp-gql-schema": "github:sylorion/smp-gql-schema#dev",
+    "subscriptions-transport-ws": "^0.11.0",
+    "ts-jest": "^29.1.1"
+  },
+  "description": "microservice pour la gestion des structures organisationnelles et les relations au sein de la plateforme ",
+  "devDependencies": {
+    "@babel/core": "^7.23.7",
+    "@babel/preset-env": "^7.23.7",
+    "babel-jest": "^29.7.0",
+    "graphql": "^16.8.1",
+    "jest": "^29.7.0"
+  }
+}

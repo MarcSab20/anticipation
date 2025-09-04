@@ -1,0 +1,26 @@
+INSERT INTO "Profile" (
+  "uniqRef",
+  "slug",
+  "firstName",
+  "lastName",
+  "dateOfBirth",
+  "gender",
+  "nationality",
+  "phoneNumber",
+  "locationID",
+  "idCardNumber",
+  "passportNumber",
+  "socialSecurityNumber",
+  "state",
+  "createdAt"
+) VALUES 
+  ('123e4567-e89b-12d3-a456-426614174000', 'john-doe-1', 'John', 'Doe', '1990-01-01', 'male', 'American', '555-1234', NULL, 'ID12345678', 'P12345678', 'SSN1234', 'online', NOW()),
+  ('e2fc714c-7f10-4775-9f5f-5e4ae3be6d5f', 'jane-doe-2', 'Jane', 'Doe', '1992-02-02', 'female', 'Canadian', '555-5678', NULL, 'ID87654321', 'P87654321', 'SSN5678', 'online', NOW()),
+  ('9f1a4b49-6e79-41e8-9a1b-4c7ae07a04a8', 'emily-jones-3', 'Emily', 'Jones', '1988-03-03', 'female', 'British', '555-9101', NULL, 'ID23456789', 'P23456789', 'SSN2345', 'online', NOW()),
+  ('6e115adc-5f24-4ffc-ba9c-cd5e56b0f9a2', 'michael-brown-4', 'Michael', 'Brown', '1995-04-04', 'male', 'Australian', '555-1122', NULL, 'ID34567890', 'P34567890', 'SSN3456', 'online', NOW()),
+  ('f47ac10b-58cc-4372-a567-0e02b2c3d479', 'chloe-taylor-5', 'Chloe', 'Taylor', '1993-05-05', 'female', 'American', '555-1133', NULL, 'ID45678901', 'P45678901', 'SSN4567', 'online', NOW()),
+  ('d3b07384-bb7c-4f12-9fb0-08b0e5da408f', 'david-smith-6', 'David', 'Smith', '1987-06-06', 'male', 'American', '555-1144', NULL, 'ID56789012', 'P56789012', 'SSN5678', 'online', NOW()),
+  ('a0d3334f-5b5d-450b-9b44-a4f8f4511a76', 'sarah-johnson-7', 'Sarah', 'Johnson', '1991-07-07', 'female', 'Canadian', '555-1155', NULL, 'ID67890123', 'P67890123', 'SSN6789', 'online', NOW()),
+  ('5ef5f676-a58b-4b70-9fdf-1b50768e4871', 'james-wilson-8', 'James', 'Wilson', '1989-08-08', 'male', 'British', '555-1166', NULL, 'ID78901234', 'P78901234', 'SSN7890', 'online', NOW()),
+  ('7c9a2a8f-16a0-4d91-afe9-ea3e2a3d0b17', 'sophia-martinez-9', 'Sophia', 'Martinez', '1994-09-09', 'female', 'American', '555-1177', NULL, 'ID89012345', 'P89012345', 'SSN8901', 'online', NOW()),
+  ('0ab1c980-eb9c-4b0c-9a66-1a1d3e8a9bef', 'daniel-garcia-10', 'Daniel', 'Garcia', '1996-10-10', 'male', 'Mexican', '555-1188', NULL, 'ID90123456', 'P90123456', 'SSN9012', 'online', NOW());
