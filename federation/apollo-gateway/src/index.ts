@@ -57,10 +57,10 @@ const SUBGRAPH_CONFIG = {
     url: process.env.MU_AUTH_URL || 'http://localhost:3001/graphql'
   },
   // Ajouter d'autres subgraphs ici quand nécessaire
-  // 'mu-organization': {
-  //   name: 'mu-organization',
-  //   url: process.env.MU_ORGANIZATION_URL || 'http://localhost:3002/graphql'
-  // }
+  'mu-organization': {
+    name: 'mu-organization',
+    url: process.env.MU_ORGANIZATION_URL || 'http://localhost:4004/graphql'
+  }
 };
 
 class FrontendSimulationAuthPlugin {
@@ -499,162 +499,6 @@ async function startGateway() {
         };
       }
     }));
-
-    // Health check 
-    app.get('/health', async (req, res) => {
-      const traceId = req.headers['x-trace-id'] || uuidv4();
-      
-      try {
-        const [keycloakTest, redisTest, opaTest] = await Promise.allSettled([
-          authService.testKeycloakConnection(),
-          authService.testRedisConnection(),
-          authService.testOPAConnection()
-        ]);
-
-        const keycloak = keycloakTest.status === 'fulfilled' && keycloakTest.value.connected;
-        const redis = redisTest.status === 'fulfilled' && redisTest.value.connected;
-        const opa = opaTest.status === 'fulfilled' && opaTest.value.connected;
-        
-        const allHealthy = keycloak && redis && opa;
-        const metrics = authService.getMetrics();
-
-        const healthResponse = {
-          status: allHealthy ? 'OK' : 'DEGRADED',
-          timestamp: new Date().toISOString(),
-          service: 'apollo-gateway-frontend-simulation',
-          traceId,
-          auth: {
-            keycloak: { 
-              status: keycloak ? 'up' : 'down',
-              details: keycloakTest.status === 'fulfilled' ? keycloakTest.value : undefined
-            },
-            redis: { 
-              status: redis ? 'up' : 'down',
-              details: redisTest.status === 'fulfilled' ? redisTest.value : undefined
-            },
-            opa: { 
-              status: opa ? 'up' : 'down',
-              details: opaTest.status === 'fulfilled' ? opaTest.value : undefined
-            }
-          },
-          gateway: {
-            subgraphs: Object.keys(SUBGRAPH_CONFIG),
-            federationVersion: '2.0',
-            introspectionEnabled: true
-          },
-          metrics: {
-            totalRequests: metrics.totalRequests || 0,
-            successfulLogins: metrics.successfulLogins || 0,
-            authorizationChecks: metrics.authorizationChecks || 0,
-            cacheHitRate: metrics.cacheHitRate || 0
-          },
-          simulation: {
-            frontendMode: true,
-            authenticationFlow: 'krakend -> mu-auth -> keycloak',
-            authorizationFlow: 'apollo-gateway -> smp-auth-ts -> opa',
-            supportedOperations: [
-              'sign-up via /api/auth/sign-up',
-              'sign-in via /api/auth/sign-in', 
-              'graphql queries via /graphql'
-            ]
-          }
-        };
-
-        res.status(allHealthy ? 200 : 503).json(healthResponse);
-      } catch (error) {
-        res.status(500).json({
-          status: 'ERROR',
-          timestamp: new Date().toISOString(),
-          service: 'apollo-gateway-frontend-simulation',
-          traceId,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-      }
-    });
-
-    app.get('/debug', async (req, res) => {
-      const traceId = req.headers['x-trace-id'] || uuidv4();
-      
-      try {
-        const metrics = authService.getMetrics();
-        
-        const debugInfo = {
-          timestamp: new Date().toISOString(),
-          traceId,
-          service: 'apollo-gateway-frontend-simulation',
-          configuration: {
-            subgraphs: SUBGRAPH_CONFIG,
-            authConfig: {
-              keycloak: {
-                url: authConfig.keycloak.url,
-                realm: authConfig.keycloak.realm,
-                clientId: authConfig.keycloak.clientId
-              },
-              opa: {
-                url: authConfig.opa.url,
-                policyPath: authConfig.opa.policyPath
-              },
-              redis: {
-                host: authConfig.redis.host,
-                port: authConfig.redis.port,
-                db: authConfig.redis.db
-              }
-            }
-          },
-          metrics,
-          environment: {
-            nodeEnv: process.env.NODE_ENV || 'development',
-            port: process.env.PORT || 4000,
-            version: process.env.npm_package_version || 'unknown'
-          },
-          simulationGuide: {
-            signUp: {
-              url: 'POST /api/auth/sign-up',
-              payload: {
-                username: 'john_doe',
-                email: 'john@example.com',
-                password: 'SecurePass123!',
-                firstName: 'John',
-                lastName: 'Doe'
-              }
-            },
-            signIn: {
-              url: 'POST /api/auth/sign-in',
-              payload: {
-                username: 'john_doe',
-                password: 'SecurePass123!'
-              }
-            },
-            graphqlQuery: {
-              url: 'POST /graphql',
-              headers: {
-                'Authorization': 'Bearer <token_from_sign_in>',
-                'Content-Type': 'application/json'
-              },
-              payload: {
-                query: `query GetUser($userId: ID!) {
-                  getUser(userId: $userId) {
-                    sub
-                    email
-                    given_name
-                    family_name
-                    roles
-                  }
-                }`,
-                variables: { userId: "<user_id>" }
-              }
-            }
-          }
-        };
-
-        res.json(debugInfo);
-      } catch (error) {
-        res.status(500).json({
-          error: error instanceof Error ? error.message : 'Unknown error',
-          traceId
-        });
-      }
-    });
 
     const PORT = parseInt(process.env.PORT || '4000');
 
