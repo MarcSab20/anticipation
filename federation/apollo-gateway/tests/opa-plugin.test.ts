@@ -915,3 +915,89 @@ describe('EnhancedOPAAuthPlugin - Tests avec OPA Réel', () => {
     }
   });
 });
+
+describe('EnhancedOPAAuthPlugin - Tests avec OPA Réel', () => {
+  // Ces tests nécessitent un serveur OPA en cours d'exécution
+  const isOPAAvailable = process.env.OPA_URL && process.env.TEST_WITH_REAL_OPA === 'true';
+  
+  if (!isOPAAvailable) {
+    it.skip('Tests OPA réels désactivés (définir TEST_WITH_REAL_OPA=true et OPA_URL)', () => {});
+    return;
+  }
+
+  let realAuthService: IAuthenticationService;
+  let plugin: EnhancedOPAAuthPlugin;
+  let server: ApolloServer;
+
+  beforeEach(async () => {
+    // Créer un service d'auth réel pour les tests d'intégration
+    const { createAuthServiceFromEnv } = await import('smp-auth-ts');
+    realAuthService = createAuthServiceFromEnv();
+    
+    plugin = createOPAAuthPlugin(realAuthService);
+    
+    server = new ApolloServer({
+      schema: buildSubgraphSchema({ typeDefs, resolvers }),
+      plugins: [plugin.plugin()]
+    });
+
+    await server.start();
+  });
+
+  afterEach(async () => {
+    await server?.stop();
+    await realAuthService?.close();
+  });
+
+  it('devrait fonctionner avec des politiques OPA réelles', async () => {
+    const query = `query { organizations { organizationID legalName } }`;
+    
+    const result = await server.executeOperation({
+      query
+    }, {
+      contextValue: {
+        ...mockContext,
+        // Utiliser un vrai token pour les tests d'intégration
+        headers: { authorization: `Bearer ${process.env.TEST_AUTH_TOKEN}` }
+      }
+    });
+
+    // Le résultat dépendra de vos politiques OPA réelles
+    expect(result.body.kind).toBe('single');
+    
+    if (result.body.kind === 'single') {
+      // Soit succès, soit erreur d'autorisation explicite
+      if (result.body.singleResult.errors) {
+        expect(result.body.singleResult.errors[0].message).toMatch(
+          /(Access denied|Authentication required|Authorization)/
+        );
+      } else {
+        expect(result.body.singleResult.data).toBeDefined();
+      }
+    }
+  });
+});
+
+// =============================================================================
+// EXEMPLE DE CONFIGURATION DE TEST JEST
+// =============================================================================
+
+export const jestConfig = {
+  preset: 'ts-jest',
+  testEnvironment: 'node',
+  roots: ['<rootDir>/tests'],
+  testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
+  transform: {
+    '^.+\\.ts$': 'ts-jest'
+  },
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/**/*.interface.ts'
+  ],
+  coverageDirectory: 'coverage',
+  coverageReporters: ['text', 'lcov', 'html'],
+  setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  testTimeout: 30000,
+  verbose: true
+};
